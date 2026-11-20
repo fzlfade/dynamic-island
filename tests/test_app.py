@@ -108,3 +108,21 @@ def test_battery_hud(island, monkeypatch, tmp_path):
     island.grab().save(str(tmp_path / "battery_low.png"))
     island._show_hud(("battery", 0.79, True, True, "Charger connected", "Charging · 79%"), 3)
     island.grab().save(str(tmp_path / "battery_charging.png"))
+
+
+def test_autostart_roundtrip():
+    import winreg
+    name = "DynamicIslandTest"
+    try:
+        app.set_autostart(True, name)
+        assert app.autostart_enabled(name)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, app.RUN_KEY) as k:
+            assert winreg.QueryValueEx(k, name)[0].endswith('dynamic_island.py"')
+        app.set_autostart(False, name)
+        assert not app.autostart_enabled(name)
+    finally:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, app.RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+                winreg.DeleteValue(k, name)
+        except FileNotFoundError:
+            pass

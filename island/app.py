@@ -16,19 +16,21 @@ Same building blocks as Nusa's core notch, rebuilt in Python:
   - input language HUD: GetKeyboardLayout of the foreground window's thread, named via LCIDToLocaleName +
     GetLocaleInfoEx; checked after switch-key releases and every second (Nusa: same imports, "hud_language")
 
-Run:  python dynamic_island.py      Quit: right-click the island.
+Run:  python dynamic_island.py      Quit: tray icon menu.
 """
 import ctypes
 import math
+import os
 import sys
 import time
+import winreg
 from ctypes import wintypes
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import system
+from island import store, system
 from island.media import Media, line_at
 
 COLLAPSED = (190.0, 34.0)
@@ -40,6 +42,30 @@ BATTERY_POPUP = (340.0, 64.0)
 BATTERY_SECONDS = 3.0
 EXPANDED = (400.0, 124.0)
 WIN_W, WIN_H = 440, 140  # window fits the largest island; transparent pixels are click-through
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dynamic_island.py")
+
+
+def set_autostart(on, key_name="DynamicIsland"):
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+        if on:
+            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            winreg.SetValueEx(k, key_name, 0, winreg.REG_SZ, f'"{pythonw}" "{SCRIPT}"')
+        else:
+            try:
+                winreg.DeleteValue(k, key_name)
+            except FileNotFoundError:
+                pass
+
+
+def autostart_enabled(key_name="DynamicIsland"):
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, key_name)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def lerp(a, b, t):
@@ -182,8 +208,6 @@ class Island(QWidget):
         self.leave_delay.start()
 
     def mouseReleaseEvent(self, e):
-        if e.button() == Qt.RightButton:
-            QApplication.quit()
         for action, rect in self.buttons.items():
             if rect.contains(e.position()):
                 self.media.send(action)
@@ -332,9 +356,43 @@ class Island(QWidget):
         p.drawText(rect, align | Qt.AlignVCenter, QFontMetrics(font).elidedText(s, Qt.ElideRight, int(rect.width())))
 
 
+ABOUT = ("Lyrics from LRCLIB (lrclib.net).\n"
+         "Weather data from MET Norway (api.met.no), CC BY 4.0.")
+
+
+def make_tray(parent):
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor(0, 0, 0))
+    p.setPen(QColor(90, 90, 90))  # keeps the black pill visible on a dark taskbar
+    p.drawRoundedRect(QRectF(0.5, 4.5, 15, 7), 3.5, 3.5)
+    p.end()
+    tray = QSystemTrayIcon(QIcon(pm), parent)
+    menu = QMenu()
+
+    def open_settings():
+        if not (store.data_dir() / "settings.txt").exists():
+            store.save_lines("settings.txt", [])
+        os.startfile(store.data_dir() / "settings.txt")
+
+    menu.addAction("Open settings file", open_settings)
+    start = QAction("Start with Windows", menu, checkable=True, checked=autostart_enabled())
+    start.toggled.connect(set_autostart)
+    menu.addAction(start)
+    menu.addAction("About", lambda: QMessageBox.information(None, "About Dynamic Island", ABOUT))
+    menu.addAction("Quit", QApplication.quit)
+    tray.setContextMenu(menu)
+    tray._menu = menu  # keep alive
+    tray.show()
+    return tray
+
+
 def main():
     app = QApplication(sys.argv)
     island = Island(Media())
+    tray = make_tray(island)  # noqa: F841 (referenced so it is not collected)
     system.install_keys(island, system.Volume())
     system.install_brightness(island)
     sys.exit(app.exec())
