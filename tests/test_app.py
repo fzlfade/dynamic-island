@@ -251,4 +251,4 @@ def test_calendar_rows_and_reminder(island, monkeypatch):
     island._calendar_check()
     island._calendar_check()
     assert sent == [("popup", "\uE787", "In 10 min", "Dentist")]
-    assert island._calendar_rows() == [("Dentist", (now + timedelta(minutes=5)).strftime("%H:%M"))] or island._calendar_rows() == []
+    assert island._calendar_rows() == [("Dentist", (now + timedelta(minutes=5)).strftime("%H:%M"))]

@@ -1,4 +1,5 @@
 """Calendar from an iCal link: pure parsing + recurrence (no Qt) and a background fetcher."""
+import http.client
 import sys
 import threading
 import urllib.request
@@ -6,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+_warned = []  # one stderr warning per run
 CAP = 5000  # hard limit on recurrence steps per series
 DAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 FREQS = ("DAILY", "WEEKLY", "MONTHLY", "YEARLY")
@@ -26,6 +28,8 @@ class Series:
     summary: str
     rule: dict = None  # supported RRULE parts, or None for a single event
     exdates: list = field(default_factory=list)
+    uid: str = ""
+    rid: object = None  # RECURRENCE-ID: this event replaces that occurrence of the master with the same uid
 
     @property
     def all_day(self):
@@ -60,7 +64,7 @@ def _value(v, params):
 
 def _rule(text):
     parts = dict(p.split("=", 1) for p in text.split(";") if "=" in p)
-    if parts.get("FREQ") not in FREQS or set(parts) - {"FREQ", "INTERVAL", "COUNT", "UNTIL", "BYDAY"}:
+    if parts.get("FREQ") not in FREQS or set(parts) - {"FREQ", "INTERVAL", "COUNT", "UNTIL", "BYDAY", "WKST"}:
         return None
     if "BYDAY" in parts and parts["FREQ"] != "WEEKLY":
         return None
@@ -78,20 +82,34 @@ def _unescape(s):
     return s.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
 
 
+def _like(v, base):
+    """Convert date/datetime `v` to the kind of `base` (date, floating or aware) so they can be compared."""
+    if type(base) is date:
+        return v if type(v) is date else v.date()
+    if type(v) is date:
+        v = datetime.combine(v, base.timetz())
+    if base.tzinfo is None:
+        return v.astimezone().replace(tzinfo=None) if v.tzinfo else v
+    return v if v.tzinfo else v.replace(tzinfo=base.tzinfo)
+
+
 def _series(props):
     start = _value(*props["DTSTART"][0])
     if "DTEND" in props:
-        duration = _value(*props["DTEND"][0]) - start
+        duration = _like(_value(*props["DTEND"][0]), start) - start
     else:
         duration = timedelta(days=1) if type(start) is date else timedelta(0)
     rule = _rule(props["RRULE"][0][0]) if "RRULE" in props else None
+    if rule and "until" in rule:
+        rule["until"] = _like(rule["until"], start)
     ex = [_value(v, p) for vs, p in props.get("EXDATE", []) for v in vs.split(",")]
     summary = _unescape(props["SUMMARY"][0][0]) if "SUMMARY" in props else ""
-    return Series(start, duration, summary, rule, ex)
+    rid = _value(*props["RECURRENCE-ID"][0]) if "RECURRENCE-ID" in props else None
+    return Series(start, duration, summary, rule, ex, props.get("UID", [("", 0)])[0][0].strip(), rid)
 
 
 def parse_ics(text):
-    out, props = [], None
+    out, props, cancelled = [], None, []
     for line in _unfold(text):
         key, _, val = line.partition(":")
         name, *plist = key.split(";")
@@ -100,13 +118,19 @@ def parse_ics(text):
             props = {}
         elif name == "END" and val.strip().upper() == "VEVENT" and props is not None:
             try:
-                out.append(_series(props))
-            except (KeyError, ValueError):  # no DTSTART or an unreadable value: skip the event
+                x = _series(props)
+                (cancelled if props.get("STATUS", [("", 0)])[0][0].strip().upper() == "CANCELLED" else out).append(x)
+            except (KeyError, ValueError, TypeError):  # no DTSTART or an unreadable value: skip the event
                 pass
             props = None
         elif props is not None:
             params = dict(p.split("=", 1) for p in plist if "=" in p)
             props.setdefault(name, []).append((val, params))
+    for o in out + cancelled:  # a moved or cancelled instance suppresses the master's original slot
+        if o.rid is not None and o.uid:
+            for m in out:
+                if m.uid == o.uid and m.rid is None:
+                    m.exdates.append(o.rid)
     return out
 
 
@@ -167,19 +191,27 @@ def events_on(series, day, tz):
     """Events on `day` in local `tz`, sorted. Timed events start that day; all-day ones cover it."""
     out = []
     for s in series:
-        for occ in _occurrences(s):
-            if s.all_day:
-                if occ > day:
+        found = []
+        try:
+            for occ in _occurrences(s):
+                if s.all_day:
+                    if occ > day:
+                        break
+                    end = occ + s.duration
+                    if end > day and not _excluded(s, occ):
+                        found.append(Event(datetime.combine(occ, time.min, tz), datetime.combine(end, time.min, tz), s.summary, True))
+                    continue
+                local = occ.astimezone(tz) if occ.tzinfo else occ.replace(tzinfo=tz)
+                if local.date() > day:
                     break
-                end = occ + s.duration
-                if end > day and not _excluded(s, occ):
-                    out.append(Event(datetime.combine(occ, time.min, tz), datetime.combine(end, time.min, tz), s.summary, True))
-                continue
-            local = occ.astimezone(tz) if occ.tzinfo else occ.replace(tzinfo=tz)
-            if local.date() > day:
-                break
-            if local.date() == day and not _excluded(s, occ):
-                out.append(Event(local, local + s.duration, s.summary, False))
+                if local.date() == day and not _excluded(s, occ):
+                    found.append(Event(local, local + s.duration, s.summary, False))
+        except (TypeError, ValueError, OverflowError):  # one malformed series must not break paint or the timer
+            if not _warned:
+                _warned.append(1)
+                print("calendar: skipped an event that could not be expanded", file=sys.stderr)
+            continue
+        out += found
     return sorted(out, key=lambda e: (e.start, e.summary))
 
 
@@ -210,12 +242,12 @@ class Calendar:
     def fetch_once(self):
         if not self.url:
             return
-        req = urllib.request.Request(self.url, headers={"User-Agent": "DynamicIsland/0.1"})
         try:
+            req = urllib.request.Request(self.url, headers={"User-Agent": "DynamicIsland/0.1"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 self.series = parse_ics(r.read().decode("utf-8"))  # one atomic assignment; the Qt side only reads it
-        except (OSError, ValueError) as e:
-            print(f"calendar fetch failed: {e}", file=sys.stderr)
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            print(f"calendar fetch failed: {type(e).__name__}", file=sys.stderr)  # never the URL: it is a secret
 
     def refresh(self):
         threading.Thread(target=self.fetch_once, daemon=True).start()

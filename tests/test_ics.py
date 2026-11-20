@@ -105,3 +105,58 @@ def test_calendar_without_url_does_nothing(monkeypatch):
     c = ics.Calendar("")
     c.fetch_once()
     assert c.series == []
+
+
+def vevent(*lines):
+    return "BEGIN:VEVENT\n" + "\n".join(lines) + "\nEND:VEVENT\n"
+
+
+MASTER = vevent("UID:a", "DTSTART;TZID=Asia/Jakarta:20261102T100000", "RRULE:FREQ=WEEKLY;COUNT=4", "SUMMARY:Sync")
+
+
+def test_override_moves_instance():
+    text = MASTER + vevent("UID:a", "RECURRENCE-ID;TZID=Asia/Jakarta:20261109T100000",
+                           "DTSTART;TZID=Asia/Jakarta:20261109T150000", "SUMMARY:Sync")
+    s = ics.parse_ics(text)
+    assert [e.start.strftime("%H:%M") for e in ics.events_on(s, date(2026, 11, 9), JKT)] == ["15:00"]
+    assert [e.start.strftime("%H:%M") for e in ics.events_on(s, date(2026, 11, 16), JKT)] == ["10:00"]
+    seen = set()
+    assert ics.due_reminders(s, datetime(2026, 11, 9, 9, 55, tzinfo=JKT), seen) == []  # old slot is gone
+    assert ics.due_reminders(s, datetime(2026, 11, 9, 14, 55, tzinfo=JKT), seen) == ["Sync"]
+
+
+def test_cancelled_override_and_event():
+    s = ics.parse_ics(MASTER + vevent("UID:a", "RECURRENCE-ID;TZID=Asia/Jakarta:20261109T100000",
+                                      "DTSTART;TZID=Asia/Jakarta:20261109T100000", "STATUS:CANCELLED", "SUMMARY:Sync")
+                      + vevent("DTSTART:20261109T030000Z", "STATUS:CANCELLED", "SUMMARY:Nope"))
+    assert not ics.events_on(s, date(2026, 11, 9), JKT)
+    assert ics.events_on(s, date(2026, 11, 2), JKT)
+
+
+def test_until_kind_mismatch_expands():
+    a = vevent("DTSTART;TZID=Asia/Jakarta:20261102T100000", "RRULE:FREQ=DAILY;UNTIL=20261104", "SUMMARY:A")
+    b = vevent("DTSTART:20261102T100000", "RRULE:FREQ=DAILY;UNTIL=20261104T030000Z", "SUMMARY:B")  # floating = machine zone
+    got = lambda t: [d for d in range(1, 9) if ics.events_on(ics.parse_ics(t), date(2026, 11, d), JKT)]
+    assert got(a) == [2, 3, 4]
+    assert 2 in got(b) and 8 not in got(b)
+
+
+def test_broken_series_is_skipped(monkeypatch):
+    good = ics.parse_ics(vevent("DTSTART:20261109T030000Z", "SUMMARY:Good"))[0]
+    bad = ics.parse_ics(vevent("DTSTART:20261109T030000Z", "SUMMARY:Bad"))[0]
+    bad.rule = {"freq": "DAILY", "interval": 1, "until": date(2026, 11, 20)}  # date vs aware: raises TypeError
+    assert [e.summary for e in ics.events_on([bad, good], date(2026, 11, 9), JKT)] == ["Good"]
+
+
+def test_malformed_url_keeps_series_and_hides_url(capsys):
+    c = ics.Calendar("")
+    c.series = ["kept"]
+    c.url = "not-a-url-SECRET123"
+    c.fetch_once()
+    assert c.series == ["kept"]
+    assert "SECRET123" not in capsys.readouterr().err
+
+
+def test_wkst_still_recurs():
+    s = ics.parse_ics(vevent("DTSTART:20261102T030000Z", "RRULE:FREQ=WEEKLY;WKST=SU;COUNT=3", "SUMMARY:W"))
+    assert [d for d in range(1, 30) if ics.events_on(s, date(2026, 11, d), JKT)] == [2, 9, 16]
