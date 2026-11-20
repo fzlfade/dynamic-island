@@ -32,6 +32,7 @@ def island(qapp, fake_media):
     from island.app import Island
     w = Island(fake_media)
     yield w
+    w._weather_thread.join(5)  # no thread may outlive the test's monkeypatches
     w.close()
 
 

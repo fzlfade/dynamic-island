@@ -48,7 +48,10 @@ def location(values):
         loc = (round(lat, 4), round(lon, 4), "My location")
     except Exception:  # denied, no sensor, timeout: any failure falls back
         return JAKARTA
-    store.save_kv("settings.txt", {**store.load_kv("settings.txt"), "lat": loc[0], "lon": loc[1], "place": loc[2]})
+    try:
+        store.save_kv("settings.txt", {**store.load_kv("settings.txt"), "lat": loc[0], "lon": loc[1], "place": loc[2]})
+    except Exception as e:  # a failed save must not lose the fix
+        print(f"location save failed: {type(e).__name__}", file=sys.stderr)
     return loc
 
 

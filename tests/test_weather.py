@@ -80,3 +80,14 @@ def test_location_uses_settings_then_saves_geolocator(monkeypatch):
     assert weather.location({"lat": "5", "lon": "6", "place": "Home"}) == (5.0, 6.0, "Home")
     assert weather.location({}) == (1.2346, 2.3457, "My location")
     assert store.load_kv("settings.txt") == {"lat": "1.2346", "lon": "2.3457", "place": "My location"}
+
+
+def test_location_survives_save_failure(monkeypatch, capsys):
+    monkeypatch.setattr(weather, "_geolocate", lambda: (1.5, 2.5))
+
+    def boom(*a):
+        raise OSError("disk full 1.5")
+    monkeypatch.setattr(store, "save_kv", boom)
+    assert weather.location({}) == (1.5, 2.5, "My location")
+    err = capsys.readouterr().err
+    assert "OSError" in err and "1.5" not in err

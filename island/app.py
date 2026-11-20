@@ -33,7 +33,7 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, store, system, weather
+from island import ics, network, prayer, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -119,13 +119,18 @@ class Island(QWidget):
         self.todo = Todo(self, self.notify)
         self.weather, self.weather_place = None, ""  # set by the worker once the location is known
         self.today.add_section(self._weather_rows)  # first, so the row cap never trims it
-        threading.Thread(target=self._start_weather, daemon=True).start()
+        self.prayer = prayer.Prayer(store.load_kv("settings.txt"))
+        self.prayer_prev = prayer.minute_of(datetime.now())
+        self._weather_thread = threading.Thread(target=self._start_weather, daemon=True)
+        self._weather_thread.start()
         QTimer(self, interval=1_800_000, timeout=lambda: self.weather and self.weather.refresh()).start()
         self.water = Water(store.load_kv("water.txt"))
         self.water.roll(datetime.now())
         self.popup_actions = {"Time to Drink": self.drink}  # left-click on the collapsed island while that popup shows
         self.today.add_section(lambda: [("Water", self.water.status())])
         QTimer(self, interval=60_000, timeout=self._water_check).start()
+        self.today.add_section(lambda: self.prayer.rows(datetime.now()))  # before the calendar, so events are trimmed first
+        QTimer(self, interval=60_000, timeout=self._prayer_check).start()
         self.calendar = ics.Calendar(store.load_kv("settings.txt").get("calendar_url", ""))
         self.cal_rows = (None, None, [])  # (series, day, rows): the Today page repaints often, so expand recurrences once
         self.reminded = set()
@@ -223,6 +228,7 @@ class Island(QWidget):
 
     def _start_weather(self):  # worker thread: the Geolocator read may take seconds; only rebinds attributes
         lat, lon, self.weather_place = weather.location(store.load_kv("settings.txt"))
+        self.prayer.set_location(lat, lon)
         w = weather.Weather(lat, lon)
         w.fetch_once()
         self.weather = w
@@ -234,6 +240,15 @@ class Island(QWidget):
     def _calendar_check(self):
         for summary in ics.due_reminders(self.calendar.series, datetime.now().astimezone(), self.reminded):
             self.notify(("popup", "", "In 10 min", summary))
+
+    def _prayer_check(self):
+        now = datetime.now()
+        hits = self.prayer.due(now, self.prayer_prev)
+        self.prayer_prev = prayer.minute_of(now)
+        for name, hhmm in hits:
+            self.notify(("popup", prayer.GLYPH, name, hhmm))
+        if hits and self.prayer.pause_media and self.info.get("playing"):
+            self.media.send("toggle")
 
     def _water_check(self):
         hud = self.water.remind(datetime.now())

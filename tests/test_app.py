@@ -268,3 +268,30 @@ def test_weather_row_is_first_on_today(island):
     island.weather, island.weather_place = w, "Jakarta"
     assert island._weather_rows() == [("Jakarta", "27\u00b0 Partly cloudy")]
     assert island.today.sections[0][0] == island._weather_rows
+
+
+def test_prayer_check_notifies_and_pauses_media(island, fake_media, monkeypatch):
+    from datetime import datetime
+    from island import prayer
+    island.prayer = prayer.Prayer({"prayer": "1", "prayer_pause_media": "1"})
+    island.prayer.set_location(-6.2088, 106.8456)
+    island.prayer.tz = 7
+    t = island.prayer.schedule(datetime(2026, 11, 21).date())["Dzuhur"]
+    at = t.hour * 60 + t.minute
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 21, t.hour, t.minute)
+    monkeypatch.setattr(app, "datetime", Clock)
+    island.prayer_prev = at - 1
+    island.queue.clear()
+    island.info = {"playing": True}
+    island._prayer_check()
+    assert ("popup", "", "Dzuhur", f"{t:%H:%M}") in [island.hud_notified and island.hud_notified[0], *(q[0] for q in island.queue)]
+    assert fake_media.sent == ["toggle"]
+    assert island.prayer_prev == at
+    island.info = {"playing": False}
+    island.prayer_prev = at - 1
+    island._prayer_check()
+    assert fake_media.sent == ["toggle"]
