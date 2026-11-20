@@ -57,7 +57,7 @@ def test_click_runs_popup_action(island):
     island._set_expand(0.0)
     island._show_hud(("popup", "\uE9CA", "Time to Drink", "0 / 1500 ml"))
     click = lambda: island.mouseReleaseEvent(QMouseEvent(
-        QEvent.MouseButtonRelease, QPointF(5, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        QEvent.MouseButtonRelease, QPointF(5, 5), QPointF(5, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
     click()
     assert hits == [1] and not island._hud_active(), "click triggers the action and dismisses the popup"
     click()

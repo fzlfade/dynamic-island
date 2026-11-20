@@ -31,6 +31,27 @@ def test_page_dots_drawn(island):
     assert (c.red(), c.green(), c.blue()) != (0, 0, 0)
 
 
+def _click_at(island, pos):
+    island.mouseReleaseEvent(QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, island.mapToGlobal(pos.toPoint()),
+                                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+
+
+def test_page_buttons_switch_pages(island):
+    island._set_expand(1.0)
+    island.grab()  # paint lays out the dot/arrow hit areas
+    _click_at(island, island.page_hits[2].center())
+    assert island.page == 2, "clicking a dot jumps to that page"
+    _click_at(island, island.page_hits["next"].center())
+    assert island.page == 3
+    island.grab()
+    _click_at(island, island.page_hits["next"].center())
+    assert island.page == 0, "next arrow wraps"
+    island.grab()
+    _click_at(island, island.page_hits["prev"].center())
+    assert island.page == 3, "prev arrow wraps backwards"
+    assert all(r.width() >= 12 and r.height() >= 16 for r in island.page_hits.values()), "big enough to hit"
+
+
 class Stub(pages.Page):
     title = "Stub"
 

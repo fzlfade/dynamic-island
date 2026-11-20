@@ -93,6 +93,7 @@ class Island(QWidget):
         self.expand = 0.0  # 0 collapsed .. 1 expanded (overshoots slightly with OutBack)
         self.hovered = False
         self.buttons = {}
+        self.page_hits = {}  # page dots and ‹ › arrows, rebuilt each paint
         self.hud = ("volume", 0.0, False)  # (kind, level 0..1, muted)
         self.brightness = None  # last reported %, None until Windows sends the initial value
         self.layout = None  # (foreground window, LANGID) last seen
@@ -381,6 +382,12 @@ class Island(QWidget):
             self.update()
             return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
+            hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
+            if hit is not None and e.button() == Qt.LeftButton:
+                step = {"prev": -1, "next": 1}.get(hit)
+                self.page = (self.page + step) % len(self.pages) if step else hit
+                self.update()
+                return
             self.pages[self.page].click(e.position(), e.button(), self)
             self._update_frame()
             self.update()
@@ -404,6 +411,7 @@ class Island(QWidget):
         path.addRoundedRect(r.adjusted(0, -radius, 0, 0), radius, radius)
         p.fillPath(path, QColor(0, 0, 0))
         self.buttons = {}
+        self.page_hits = {}
         if self._hud_active() and self.expand < 0.5:
             self._draw_hud(p, r)
             return
@@ -424,13 +432,21 @@ class Island(QWidget):
         self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter)
 
     def _draw_dots(self, p, r):
+        """Page dots (click to jump) flanked by ‹ › arrows (click to step); hit areas land in page_hits."""
         n = len(self.pages)
         if n < 2:
             return
+        cy, step = r.bottom() - 9, 14
         p.setPen(Qt.NoPen)
         for i in range(n):
+            c = QPointF(r.center().x() + (i - (n - 1) / 2) * step, cy)
             p.setBrush(QColor(255, 255, 255) if i == self.page else QColor(90, 90, 95))
-            p.drawEllipse(QPointF(r.center().x() + (i - (n - 1) / 2) * 10, r.bottom() - 8), 3, 3)
+            p.drawEllipse(c, 3, 3)
+            self.page_hits[i] = QRectF(c.x() - step / 2, cy - 9, step, 18)
+        edge = r.center().x() + (n / 2) * step
+        for key, x, glyph in (("prev", 2 * r.center().x() - edge - 14, "‹"), ("next", edge, "›")):
+            self.page_hits[key] = QRectF(x, cy - 9, 14, 18)
+            self._text(p, self.page_hits[key], glyph, 12, QColor(170, 170, 175), Qt.AlignCenter)
 
     def _draw_art(self, p, rect, radius):
         clip = QPainterPath()
