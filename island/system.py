@@ -20,6 +20,12 @@ def _com(ptr, index, *args):
     return ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, *(t for t, _ in args))(fn)(ptr, *(v for _, v in args))
 
 
+_ole32 = ctypes.windll.ole32
+_ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+_ole32.PropVariantClear.argtypes = [ctypes.c_void_p]
+_PKEY_FRIENDLY_NAME_GUID = list(uuid.UUID("A45C254E-DF1C-4EFD-8020-67D146A850E0").bytes_le)
+
+
 class Volume:
     """Master volume of the default playback device via Core Audio (the GUIDs Nusa's binary carries)."""
     CLSID_MMDeviceEnumerator = _guid("BCDE0395-E52F-467C-8E3D-C4579291692E")
@@ -45,6 +51,34 @@ class Volume:
                 _com(ep, 2)  # Release
         finally:
             _com(device, 2)
+
+    def default_device(self):
+        """(endpoint id, friendly name) of the default playback device, read fresh each call."""
+        device, store = ctypes.c_void_p(), ctypes.c_void_p()
+        _com(self.enum, 4, (ctypes.c_int, 0), (ctypes.c_int, 1), (ctypes.c_void_p, ctypes.addressof(device)))
+        try:
+            idp = ctypes.c_void_p()
+            _com(device, 5, (ctypes.c_void_p, ctypes.addressof(idp)))  # GetId
+            try:
+                dev_id = ctypes.wstring_at(idp)
+            finally:
+                _ole32.CoTaskMemFree(idp)
+            _com(device, 4, (wintypes.DWORD, 0), (ctypes.c_void_p, ctypes.addressof(store)))  # OpenPropertyStore(STGM_READ)
+            try:
+                key = (ctypes.c_byte * 20)(*_PKEY_FRIENDLY_NAME_GUID, 14, 0, 0, 0)  # PKEY_Device_FriendlyName: fmtid + pid 14
+                pv = (ctypes.c_ubyte * 24)()  # PROPVARIANT
+                _com(store, 5, (ctypes.c_void_p, ctypes.addressof(key)), (ctypes.c_void_p, ctypes.addressof(pv)))  # GetValue
+                try:
+                    vt = int.from_bytes(bytes(pv[:2]), "little")
+                    ptr = int.from_bytes(bytes(pv[8:16]), "little")
+                    name = ctypes.wstring_at(ptr) if vt == 31 and ptr else ""  # VT_LPWSTR
+                finally:
+                    _ole32.PropVariantClear(pv)
+            finally:
+                _com(store, 2)
+        finally:
+            _com(device, 2)
+        return dev_id, name or dev_id
 
     def get(self):
         level, muted = ctypes.c_float(), wintypes.BOOL()
@@ -126,6 +160,12 @@ def battery_popup(prev, cur):
     if not ac and pct <= BATTERY_LOW < was_pct:
         return "Low battery", "Plug in soon"
     return None
+
+
+def audio_popup(prev, cur):
+    """(title, subtitle) when the default output device changed between two default_device() readings."""
+    if prev and prev[0] != cur[0]:
+        return "Audio output", cur[1]
 
 
 def foreground_layout():

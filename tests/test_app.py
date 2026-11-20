@@ -221,3 +221,20 @@ def test_instant_hud_not_requeued(island):
     island._show_hud(("volume", 0.5, False))
     island._animate_to(1.0)
     assert not island.queue
+
+
+def test_audio_popup_and_errors(island, monkeypatch, tmp_path, capsys):
+    dev = {"v": ("b", "Buds Pro")}
+    monkeypatch.setattr(island.volume, "default_device", lambda: dev["v"])
+    island.audio = ("a", "Speakers")
+    island.check_audio()
+    assert island.hud == ("popup", "\uE7F6", "Audio output", "Buds Pro") and island.audio == ("b", "Buds Pro")
+    island.grab().save(str(tmp_path / "audio.png"))
+
+    def boom():
+        raise OSError("mm")
+    monkeypatch.setattr(island.volume, "default_device", boom)
+    island._show_hud(("volume", 0.5, False))
+    island.check_audio()
+    assert island.audio == ("b", "Buds Pro") and island.hud[0] == "volume"
+    assert "mm" in capsys.readouterr().err

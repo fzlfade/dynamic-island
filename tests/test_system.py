@@ -51,3 +51,15 @@ def test_real_volume_roundtrip():
 def test_language_names():
     assert system.language_name(0x0409) == ("English (United States)", "EN-US")
     assert system.language_name(0x3809) == ("English (Indonesia)", "EN-ID")
+
+
+def test_audio_popup_rules():
+    ap = system.audio_popup
+    assert ap(None, ("a", "Speakers")) is None
+    assert ap(("a", "Speakers"), ("b", "Buds Pro")) == ("Audio output", "Buds Pro")
+    assert ap(("a", "Speakers"), ("a", "Renamed")) is None
+
+
+def test_real_default_device():
+    dev = system.Volume().default_device()  # read-only: never changes the default device
+    assert len(dev) == 2 and all(isinstance(s, str) and s for s in dev)

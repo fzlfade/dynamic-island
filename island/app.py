@@ -93,6 +93,8 @@ class Island(QWidget):
         self.layout = None  # (foreground window, LANGID) last seen
         self.battery = None  # last battery_status()
         self.network = None  # last network_state()
+        self.volume = system.Volume()  # only for default_device(); the key hook has its own instance
+        self.audio = None  # last default_device()
         self.hud_notified = None  # (hud, seconds, created) while the current HUD came from notify()
         self.hud_until = 0.0
         self.queue = deque()  # (hud, seconds, created) reminders waiting for a visible, HUD-free island
@@ -223,6 +225,17 @@ class Island(QWidget):
             self._show_hud(("popup", "", *popup))  # Wi-Fi glyph
         self.network = cur
 
+    def check_audio(self):
+        try:
+            cur = self.volume.default_device()
+        except Exception as e:  # keep the baseline and stay quiet
+            print(f"default_device failed: {e}", file=sys.stderr)
+            return
+        popup = system.audio_popup(self.audio, cur)
+        if popup:
+            self._show_hud(("popup", "\uE7F6", *popup))  # headphone glyph
+        self.audio = cur
+
     def _check_fullscreen(self):
         self.setVisible(not system.fullscreen_app_running())
         self._drain()  # reminders queued behind a fullscreen app show once it closes
@@ -230,6 +243,7 @@ class Island(QWidget):
         self.check_language()  # also catches switches made with the mouse from the taskbar
         self.check_battery()  # backup for the power broadcast
         self.check_network()
+        self.check_audio()
 
     def _set_expand(self, v):
         self.expand = v
