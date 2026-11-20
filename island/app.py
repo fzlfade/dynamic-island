@@ -29,11 +29,11 @@ from collections import deque
 from datetime import datetime
 from ctypes import wintypes
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, notifications, prayer, shelf, store, system, weather
+from island import ics, network, notifications, ocr, prayer, shelf, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -84,6 +84,7 @@ def lerp(a, b, t):
 
 class Island(QWidget):
     notified = Signal(str, str)  # (app, title) from the notification worker thread
+    ocr_done = Signal(str)  # recognised text from the OCR worker thread
 
     def __init__(self, media):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -152,6 +153,7 @@ class Island(QWidget):
         self.add_page(self.shelf_page)
         self.setAcceptDrops(True)
         self.press_at = None  # where a left-button press started, for dragging shelf chips out
+        self.ocr_done.connect(self._ocr_finished)
         self.notifier = None  # built on the worker: Qt's UI thread is a COM STA and the listener must live off it
         self._notif_thread = None
         self.notified.connect(lambda app_name, title: self._show_hud(("popup", "", app_name, title), NOTIFY_SECONDS))
@@ -199,7 +201,41 @@ class Island(QWidget):
                 self.on_brightness(ctypes.c_uint32.from_address(msg.lParam + 20).value)  # Data: DWORD %
         if msg.message == 0x218 and msg.wParam == 0xA:  # PBT_APMPOWERSTATUSCHANGE: sent to every top-level window
             self.check_battery()
+        if msg.message == 0x312 and msg.wParam == ocr.HOTKEY_ID:  # WM_HOTKEY: Ctrl+Alt+T
+            self.start_ocr()
         return False, 0
+
+    def start_ocr(self):
+        self.picker = ocr.RegionPicker()  # kept on self so it isn't collected while open
+        self.picker.picked.connect(self._ocr_region)
+        self.picker.show()
+        self.picker.activateWindow()  # the picker takes focus so Esc reaches it; the island never does
+
+    def _ocr_region(self, rect):
+        if max(rect.width(), rect.height()) > ocr.max_dimension():
+            self._show_hud(("popup", ocr.GLYPH, "That area is too large", "Select a smaller part"), NOTIFY_SECONDS)
+            return
+        screen = QGuiApplication.primaryScreen()
+        QTimer.singleShot(50, lambda: self._ocr_grab(screen, rect))  # let the overlay disappear before grabbing
+
+    def _ocr_grab(self, screen, rect):
+        buf = QBuffer(data := QByteArray())
+        buf.open(QIODevice.WriteOnly)
+        screen.grabWindow(0, rect.x(), rect.y(), rect.width(), rect.height()).save(buf, "PNG")
+        threading.Thread(target=self._ocr_work, args=(bytes(data),), daemon=True).start()
+
+    def _ocr_work(self, png):  # worker thread: recognition takes a moment
+        try:
+            text = ocr.ocr_png(png)
+        except Exception as e:  # e.g. no OCR language pack: report "nothing found" rather than crash
+            print("ocr failed:", type(e).__name__, file=sys.stderr)
+            text = ""
+        self.ocr_done.emit(text)
+
+    def _ocr_finished(self, text):
+        if text.strip():
+            QGuiApplication.clipboard().setText(text)
+        self._show_hud(ocr.result_popup(text), NOTIFY_SECONDS)
 
     def check_battery(self):
         cur = system.battery_status()
@@ -645,4 +681,6 @@ def main():
     tray = make_tray(island)  # noqa: F841 (referenced so it is not collected)
     system.install_keys(island, system.Volume())
     system.install_brightness(island)
+    if not ctypes.windll.user32.RegisterHotKey(int(island.winId()), ocr.HOTKEY_ID, 0x1 | 0x2 | 0x4000, ord("T")):
+        print("ocr: Ctrl+Alt+T is taken by another app", file=sys.stderr)  # MOD_ALT|MOD_CONTROL|MOD_NOREPEAT
     sys.exit(app.exec())
