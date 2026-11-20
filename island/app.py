@@ -32,6 +32,7 @@ from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiAppli
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from island import network, store, system
+from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
 
@@ -111,6 +112,7 @@ class Island(QWidget):
         self.add_page(MediaPage())
         self.today = TodayPage()
         self.add_page(self.today)
+        self.add_page(FocusPage(self.notify))
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 

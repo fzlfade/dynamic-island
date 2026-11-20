@@ -1,7 +1,7 @@
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
-from island import app, pages
+from island import app, focus, pages
 
 
 def _wheel(island, dy):
@@ -11,12 +11,14 @@ def _wheel(island, dy):
 
 
 def test_wheel_switches_pages(island):
-    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage]
+    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, focus.FocusPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
     _wheel(island, -120)
     assert island.page == 1
+    _wheel(island, -120)
+    assert island.page == 2
     _wheel(island, -120)
     assert island.page == 0, "wraps around"
 
@@ -24,7 +26,7 @@ def test_wheel_switches_pages(island):
 def test_page_dots_drawn(island):
     island._set_expand(1.0)
     img = island.grab().toImage()
-    c = img.pixelColor(app.WIN_W // 2 + 5, int(app.EXPANDED[1] - 8))
+    c = img.pixelColor(app.WIN_W // 2 + 10, int(app.EXPANDED[1] - 8))
     assert (c.red(), c.green(), c.blue()) != (0, 0, 0)
 
 
