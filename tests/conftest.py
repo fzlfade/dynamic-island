@@ -62,3 +62,10 @@ def _no_real_notifications(monkeypatch):
     def no_listener():
         raise OSError("tests never read the user's real notifications")
     monkeypatch.setattr(notifications, "default_listener", no_listener)
+    import ctypes
+    from island import system
+
+    def accepting(ptr):  # QUNS_ACCEPTS_NOTIFICATIONS, not the machine's real Do Not Disturb / fullscreen state
+        ctypes.cast(ptr, ctypes.POINTER(ctypes.c_int))[0] = 5
+        return 0
+    monkeypatch.setattr(system, "_query_notification_state", accepting)

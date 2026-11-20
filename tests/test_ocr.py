@@ -83,9 +83,25 @@ def test_too_large_area_is_refused_without_grabbing(island, monkeypatch):
 
 
 def test_finished_text_goes_to_clipboard(island, qapp):
-    island._ocr_finished("copied words")
-    assert QGuiApplication.clipboard().text() == "copied words"
-    assert island.hud == ("popup", "", "Copied text", "12 characters")
+    clipboard = QGuiApplication.clipboard()
+    saved = clipboard.text()  # the user's clipboard: put it back whatever happens
+    try:
+        island._ocr_finished("copied words")
+        assert clipboard.text() == "copied words"
+        assert island.hud == ("popup", "", "Copied text", "12 characters")
+    finally:
+        clipboard.setText(saved)
+
+
+def test_ocr_test_restores_clipboard(island, qapp):
+    clipboard = QGuiApplication.clipboard()
+    saved = clipboard.text()
+    try:
+        clipboard.setText("user's own text")
+        test_finished_text_goes_to_clipboard(island, qapp)
+        assert clipboard.text() == "user's own text"
+    finally:
+        clipboard.setText(saved)
 
 
 def test_hotkey_message_starts_picker(island, monkeypatch):

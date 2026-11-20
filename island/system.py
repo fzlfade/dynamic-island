@@ -217,7 +217,20 @@ def install_keys(island, volume):
         print("volume: keyboard hook failed", ctypes.GetLastError(), file=sys.stderr)
 
 
-def fullscreen_app_running():
+def _query_notification_state(ptr):
+    return ctypes.windll.shell32.SHQueryUserNotificationState(ptr)
+
+
+def _notification_state():
     state = ctypes.c_int()
-    ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state))
-    return state.value in (2, 3, 4)  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+    _query_notification_state(ctypes.byref(state))
+    return state.value
+
+
+def fullscreen_app_running():
+    return _notification_state() in (2, 3, 4)  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+
+
+def notifications_quiet():
+    """True unless Windows is accepting notifications (QUNS 5): quiet hours, presenting, locked..."""
+    return _notification_state() != 5

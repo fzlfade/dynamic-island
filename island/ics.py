@@ -215,21 +215,29 @@ def events_on(series, day, tz):
     return sorted(out, key=lambda e: (e.start, e.summary))
 
 
+def rows_from(events):
+    return [(e.summary, "All day" if e.all_day else e.start.strftime("%H:%M")) for e in events]
+
+
 def rows(series, now):
     """Today-page rows (summary, "13:00" | "All day") for the day of aware `now`."""
-    return [(e.summary, "All day" if e.all_day else e.start.strftime("%H:%M")) for e in events_on(series, now.date(), now.tzinfo)]
+    return rows_from(events_on(series, now.date(), now.tzinfo))
+
+
+def due_from(events, now, seen):
+    """Summaries of timed events starting within 10 minutes that were not reminded yet (`seen` is updated)."""
+    out = []
+    for e in events:
+        key = (e.summary, e.start)
+        if not e.all_day and timedelta(0) < e.start - now <= timedelta(minutes=10) and key not in seen:
+            seen.add(key)
+            out.append(e.summary)
+    return out
 
 
 def due_reminders(series, now, seen):
-    """Summaries of timed events starting within 10 minutes that were not reminded yet (`seen` is updated)."""
-    out = []
-    for day in (now.date(), now.date() + timedelta(days=1)):
-        for e in events_on(series, day, now.tzinfo):
-            key = (e.summary, e.start)
-            if not e.all_day and timedelta(0) < e.start - now <= timedelta(minutes=10) and key not in seen:
-                seen.add(key)
-                out.append(e.summary)
-    return out
+    return due_from([e for d in (now.date(), now.date() + timedelta(days=1)) for e in events_on(series, d, now.tzinfo)],
+                    now, seen)
 
 
 class Calendar:
@@ -238,6 +246,24 @@ class Calendar:
         if self.url.lower().startswith("webcal://"):
             self.url = "https://" + self.url[9:]
         self.series = []
+        self.days, self.days_from = {}, None  # {date: [Event]} for today and tomorrow, built from `days_from`
+        self._builder = None
+
+    def build_days(self, now):
+        """Worker thread: expanding recurrences can take ~1 s on a big calendar, so never on the UI thread."""
+        series = self.series
+        self.days = {d: events_on(series, d, now.tzinfo) for d in (now.date(), now.date() + timedelta(days=1))}
+        self.days_from = series
+
+    def ensure_days(self, now):
+        """Today's/tomorrow's events if built for the current data; otherwise start a build and return None. Cheap."""
+        days = self.days
+        if self.days_from is self.series and now.date() in days and now.date() + timedelta(days=1) in days:
+            return days
+        if self._builder is None or not self._builder.is_alive():
+            self._builder = threading.Thread(target=self.build_days, args=(now,), daemon=True)
+            self._builder.start()
+        return None
 
     def fetch_once(self):
         if not self.url:
@@ -247,6 +273,7 @@ class Calendar:
             if status != 200:
                 raise OSError(f"HTTP {status}")
             self.series = parse_ics(body.decode("utf-8"))  # one atomic assignment; the Qt side only reads it
+            self.build_days(datetime.now().astimezone())
         except (OSError, ValueError) as e:
             print(f"calendar fetch failed: {type(e).__name__}", file=sys.stderr)  # never the URL: it is a secret
 

@@ -1,4 +1,5 @@
 """Ask Claude from the notch: Ctrl+Alt+Space, type a question, the answer streams into the island."""
+import sys
 import threading
 
 from PySide6.QtCore import QObject, QRectF, Qt, Signal
@@ -14,21 +15,31 @@ NO_CREDENTIALS = "Set ANTHROPIC_API_KEY or run: ant auth login"
 
 
 class Asker(QObject):
-    """Streams one answer on a worker thread; results arrive through the signals."""
-    chunk = Signal(str)
-    finished = Signal(str)
-    failed = Signal(str)
+    """Streams one answer on a worker thread; results arrive through the signals, tagged with the
+    question's generation so a slot can drop output from a question that was replaced or closed."""
+    chunk = Signal(int, str)
+    finished = Signal(int, str)
+    failed = Signal(int, str)
 
     def __init__(self):
         super().__init__()
         self.thread = None
+        self.gen = 0
 
     def ask(self, question, client=None):
-        self.thread = threading.Thread(target=self._run, args=(question, client), daemon=True)
+        self.gen += 1
+        self.thread = threading.Thread(target=self._run, args=(question, client, self.gen), daemon=True)
         self.thread.start()
 
-    def _run(self, question, client):
-        import anthropic
+    def cancel(self):
+        self.gen += 1  # anything still streaming is now stale
+
+    def _run(self, question, client, gen):
+        try:
+            import anthropic  # slow (~3.5 s), so only here on the worker
+        except ImportError:
+            self.failed.emit(gen, "Ask needs the anthropic package: pip install anthropic")
+            return
         try:
             client = client or anthropic.Anthropic()  # env var or `ant auth login` profile; no key in our files
             parts = []
@@ -40,22 +51,25 @@ class Asker(QObject):
             ) as stream:
                 for text in stream.text_stream:
                     parts.append(text)
-                    self.chunk.emit(text)
+                    self.chunk.emit(gen, text)
                 final = stream.get_final_message()
             if final.stop_reason == "refusal":
-                self.failed.emit("Claude declined this one.")
+                self.failed.emit(gen, "Claude declined this one.")
             else:
-                self.finished.emit("".join(parts))
+                self.finished.emit(gen, "".join(parts))
         except anthropic.AuthenticationError:  # status-error subclasses first: they'd also match APIStatusError
-            self.failed.emit(NO_CREDENTIALS)
+            self.failed.emit(gen, NO_CREDENTIALS)
         except anthropic.RateLimitError:
-            self.failed.emit("Busy right now, try again shortly")
+            self.failed.emit(gen, "Busy right now, try again shortly")
         except anthropic.APIStatusError as e:
-            self.failed.emit(f"Error {e.status_code}")
+            self.failed.emit(gen, f"Error {e.status_code}")
         except anthropic.APIConnectionError:
-            self.failed.emit("No connection")
+            self.failed.emit(gen, "No connection")
         except anthropic.AnthropicError:  # e.g. no credentials found when building the client
-            self.failed.emit(NO_CREDENTIALS)
+            self.failed.emit(gen, NO_CREDENTIALS)
+        except Exception as e:  # never leave the page stuck streaming
+            print("ask failed:", type(e).__name__, file=sys.stderr)
+            self.failed.emit(gen, "Something went wrong, try again")
 
 
 class AskPage(Page):
@@ -104,5 +118,6 @@ class AskPage(Page):
 
     def click(self, pos, button, island):
         self.state = "idle"  # a click on the answer closes it
+        island.asker.cancel()
         island._animate_to(0.0)
         return True

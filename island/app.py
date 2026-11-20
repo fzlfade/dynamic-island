@@ -26,7 +26,7 @@ import threading
 import time
 import winreg
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from ctypes import wintypes
 
 from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
@@ -137,7 +137,6 @@ class Island(QWidget):
         self.today.add_section(lambda: self.prayer.rows(datetime.now()))  # before the calendar, so events are trimmed first
         QTimer(self, interval=60_000, timeout=self._prayer_check).start()
         self.calendar = ics.Calendar(store.load_kv("settings.txt").get("calendar_url", ""))
-        self.cal_rows = (None, None, [])  # (series, day, rows): the Today page repaints often, so expand recurrences once
         self.reminded = set()
         self.today.add_section(self._calendar_rows)  # after Water, so the row cap trims events first
         self.calendar.refresh()
@@ -162,7 +161,8 @@ class Island(QWidget):
         self.asker.failed.connect(self._ask_failed)
         self.notifier = None  # built on the worker: Qt's UI thread is a COM STA and the listener must live off it
         self._notif_thread = None
-        self.notified.connect(lambda app_name, title: self._show_hud(("popup", "", app_name, title), NOTIFY_SECONDS))
+        self.notif_pill = store.get_int(store.load_kv("settings.txt"), "notif_pill", 1) == 1
+        self.notified.connect(self._show_notification)
         QTimer(self, interval=2000, timeout=self._notif_check).start()
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
@@ -223,17 +223,20 @@ class Island(QWidget):
         self._update_frame()
         self.asker.ask(question.strip())
 
-    def _ask_chunk(self, text):
-        self.ask_page.add(text)
-        self.update()
+    def _ask_chunk(self, gen, text):  # output from a replaced or closed question is dropped
+        if gen == self.asker.gen:
+            self.ask_page.add(text)
+            self.update()
 
-    def _ask_finished(self, _):
-        self.ask_page.finish()
-        self.update()
+    def _ask_finished(self, gen, _):
+        if gen == self.asker.gen:
+            self.ask_page.finish()
+            self.update()
 
-    def _ask_failed(self, message):
-        self.ask_page.fail(message)
-        self.update()
+    def _ask_failed(self, gen, message):
+        if gen == self.asker.gen:
+            self.ask_page.fail(message)
+            self.update()
 
     def start_ocr(self):
         self.picker = ocr.RegionPicker()  # kept on self so it isn't collected while open
@@ -286,9 +289,16 @@ class Island(QWidget):
         on = bool(system._user32.GetKeyState(system.VK_CAPITAL) & 1)  # low bit = toggled
         self._show_hud(("caps", 1.0 if on else 0.0, False))
 
-    def _show_hud(self, hud, seconds=HUD_SECONDS):
-        self.hud = hud
+    def _requeue_reminder(self):
+        """A reminder on screen that is about to be covered goes back to the front of the queue, unseen."""
+        if self.hud_notified and self._hud_active():
+            self.queue.appendleft(self.hud_notified)
+            self.hud_until = 0.0
         self.hud_notified = None
+
+    def _show_hud(self, hud, seconds=HUD_SECONDS):
+        self._requeue_reminder()  # e.g. a toast or the Wi-Fi popup must not swallow a to-do reminder
+        self.hud = hud
         self.hud_until = time.monotonic() + seconds
         self.hud_timer.start(int(seconds * 1000) + 20)
         self.update()
@@ -300,11 +310,10 @@ class Island(QWidget):
             self.notify(("popup", "", *popup))
         self.update()
 
-    def _calendar_rows(self):
-        series, day = self.calendar.series, datetime.now().date()
-        if self.cal_rows[0] is not series or self.cal_rows[1] != day:
-            self.cal_rows = (series, day, ics.rows(series, datetime.now().astimezone()))
-        return self.cal_rows[2]
+    def _calendar_rows(self):  # every paint: only reads lists the calendar worker built
+        now = datetime.now().astimezone()
+        days = self.calendar.ensure_days(now)
+        return ics.rows_from(days[now.date()]) if days else []
 
     def _start_weather(self):  # worker thread: the Geolocator read may take seconds; only rebinds attributes
         lat, lon, self.weather_place = weather.location(store.load_kv("settings.txt"))
@@ -317,8 +326,11 @@ class Island(QWidget):
         w = self.weather
         return [(self.weather_place, f"{round(w.now[0])}° {w.now[1]}")] if w and w.now else []
 
-    def _calendar_check(self):
-        for summary in ics.due_reminders(self.calendar.series, datetime.now().astimezone(), self.reminded):
+    def _calendar_check(self):  # this thread also runs the system-wide keyboard hook: never expand recurrences here
+        now = datetime.now().astimezone()
+        days = self.calendar.ensure_days(now)
+        upcoming = days[now.date()] + days[now.date() + timedelta(days=1)] if days else []
+        for summary in ics.due_from(upcoming, now, self.reminded):
             self.notify(("popup", "", "In 10 min", summary))
 
     def _prayer_check(self):
@@ -377,6 +389,10 @@ class Island(QWidget):
         popup = network.network_popup(self.network, cur)
         if popup:
             self._show_hud(("popup", "", *popup))  # Wi-Fi glyph
+        if cur[0] and self.network and not self.network[0]:  # back online (e.g. Wi-Fi came up after login): refetch now
+            self.calendar.refresh()
+            if self.weather:
+                self.weather.refresh()
         self.network = cur
 
     def check_audio(self):
@@ -391,7 +407,10 @@ class Island(QWidget):
         self.audio = cur
 
     def _check_fullscreen(self):
-        self.setVisible(not system.fullscreen_app_running())
+        hide = system.fullscreen_app_running()
+        if hide and self.isVisible():
+            self._requeue_reminder()  # shown again when the fullscreen app closes
+        self.setVisible(not hide)
         self.todo.tick()
         self._drain()  # reminders queued behind a fullscreen app show once it closes
         self._update_frame()  # picks up pages that started animating on their own
@@ -405,9 +424,8 @@ class Island(QWidget):
         self.update()
 
     def _animate_to(self, target):
-        if target >= 1.0 and self.hud_notified and self._hud_active():  # expanding hides the HUD: show the reminder again later
-            self.queue.appendleft(self.hud_notified)
-            self.hud_until, self.hud_notified = 0.0, None
+        if target >= 1.0:  # expanding hides the HUD: show the reminder again later
+            self._requeue_reminder()
         self.anim.stop()
         self.anim.setStartValue(self.expand)
         self.anim.setEndValue(target)
@@ -438,6 +456,11 @@ class Island(QWidget):
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
     # --- input ---------------------------------------------------------------
+    def _show_notification(self, app_name, title):
+        # no pill when switched off, or while Windows itself holds toasts back (Do Not Disturb, presenting)
+        if self.notif_pill and not system.notifications_quiet():
+            self._show_hud(("popup", "", app_name, title), NOTIFY_SECONDS)
+
     def _notif_check(self):  # 2 s timer: the WinRT read takes ~40 ms, so it runs off the UI thread
         if self._notif_thread is None or not self._notif_thread.is_alive():
             self._notif_thread = threading.Thread(target=self._notif_poll, daemon=True)
@@ -693,6 +716,9 @@ def make_tray(parent):
             store.save_lines("settings.txt", [])
         os.startfile(store.data_dir() / "settings.txt")
 
+    menu.addAction("Ask Claude…", lambda: parent.start_ask())  # also reachable when another app owns the hotkey
+    menu.addAction("Copy text from screen", lambda: parent.start_ocr())
+    menu.addSeparator()
     menu.addAction("Open settings file", open_settings)
     start = QAction("Start with Windows", menu, checkable=True, checked=autostart_enabled())
     start.toggled.connect(set_autostart)
