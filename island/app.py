@@ -29,11 +29,11 @@ from collections import deque
 from datetime import datetime
 from ctypes import wintypes
 
-from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, prayer, shelf, store, system, weather
+from island import ics, network, notifications, prayer, shelf, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -83,6 +83,8 @@ def lerp(a, b, t):
 
 
 class Island(QWidget):
+    notified = Signal(str, str)  # (app, title) from the notification worker thread
+
     def __init__(self, media):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -150,6 +152,10 @@ class Island(QWidget):
         self.add_page(self.shelf_page)
         self.setAcceptDrops(True)
         self.press_at = None  # where a left-button press started, for dragging shelf chips out
+        self.notifier = None  # built on the worker: Qt's UI thread is a COM STA and the listener must live off it
+        self._notif_thread = None
+        self.notified.connect(lambda app_name, title: self._show_hud(("popup", "", app_name, title), NOTIFY_SECONDS))
+        QTimer(self, interval=2000, timeout=self._notif_check).start()
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 
@@ -366,6 +372,19 @@ class Island(QWidget):
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
     # --- input ---------------------------------------------------------------
+    def _notif_check(self):  # 2 s timer: the WinRT read takes ~40 ms, so it runs off the UI thread
+        if self._notif_thread is None or not self._notif_thread.is_alive():
+            self._notif_thread = threading.Thread(target=self._notif_poll, daemon=True)
+            self._notif_thread.start()
+
+    def _notif_poll(self):
+        if self.notifier is None:
+            self.notifier = notifications.Listener()  # its first poll only records what's already there
+        new = self.notifier.poll()
+        if new:  # several at once: show the newest; the signal is queued onto the UI thread
+            app_name, title, _ = new[-1]
+            self.notified.emit(app_name, title)
+
     def mousePressEvent(self, e):
         self.press_at = e.position() if e.button() == Qt.LeftButton else None
 

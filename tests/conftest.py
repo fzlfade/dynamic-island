@@ -53,3 +53,12 @@ def _no_weather_io(monkeypatch):
     def no_net(*a, **k):
         raise OSError("tests never touch the network")
     monkeypatch.setattr(http, "get", no_net)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_notifications(monkeypatch):
+    from island import notifications
+
+    def no_listener():
+        raise OSError("tests never read the user's real notifications")
+    monkeypatch.setattr(notifications, "default_listener", no_listener)

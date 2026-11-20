@@ -10,3 +10,6 @@ tzdata
 winrt-Windows.Devices.Geolocation==4!10.0.28000.2957
 winrt-Windows.Web.Http==4!10.0.28000.2957
 winrt-Windows.Web.Http.Headers==4!10.0.28000.2957
+winrt-Windows.UI.Notifications==4!10.0.28000.2957
+winrt-Windows.UI.Notifications.Management==4!10.0.28000.2957
+winrt-Windows.ApplicationModel==4!10.0.28000.2957
