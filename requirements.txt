@@ -6,3 +6,4 @@ winrt-Windows.Foundation.Collections==4!10.0.28000.2957
 winrt-Windows.Storage.Streams==4!10.0.28000.2957
 typing_extensions
 winrt-Windows.Networking.Connectivity==4!10.0.28000.2957
+tzdata

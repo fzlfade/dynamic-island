@@ -32,7 +32,7 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import network, store, system
+from island import ics, network, store, system
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -121,6 +121,13 @@ class Island(QWidget):
         self.popup_actions = {"Time to Drink": self.drink}  # left-click on the collapsed island while that popup shows
         self.today.add_section(lambda: [("Water", self.water.status())])
         QTimer(self, interval=60_000, timeout=self._water_check).start()
+        self.calendar = ics.Calendar(store.load_kv("settings.txt").get("calendar_url", ""))
+        self.cal_rows = (None, None, [])  # (series, day, rows): the Today page repaints often, so expand recurrences once
+        self.reminded = set()
+        self.today.add_section(self._calendar_rows)  # after Water, so the row cap trims events first
+        self.calendar.refresh()
+        QTimer(self, interval=900_000, timeout=self.calendar.refresh).start()
+        QTimer(self, interval=60_000, timeout=self._calendar_check).start()
         self.todo_page = TodayPage("To-do")
         self.todo_page.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()), pin_last=True)
         self.add_page(self.todo_page)
@@ -202,6 +209,16 @@ class Island(QWidget):
         if popup:
             self.notify(("popup", "", *popup))
         self.update()
+
+    def _calendar_rows(self):
+        series, day = self.calendar.series, datetime.now().date()
+        if self.cal_rows[0] is not series or self.cal_rows[1] != day:
+            self.cal_rows = (series, day, ics.rows(series, datetime.now().astimezone()))
+        return self.cal_rows[2]
+
+    def _calendar_check(self):
+        for summary in ics.due_reminders(self.calendar.series, datetime.now().astimezone(), self.reminded):
+            self.notify(("popup", "", "In 10 min", summary))
 
     def _water_check(self):
         hud = self.water.remind(datetime.now())

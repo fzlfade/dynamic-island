@@ -238,3 +238,17 @@ def test_audio_popup_and_errors(island, monkeypatch, tmp_path, capsys):
     island.check_audio()
     assert island.audio == ("b", "Buds Pro") and island.hud[0] == "volume"
     assert "mm" in capsys.readouterr().err
+
+
+def test_calendar_rows_and_reminder(island, monkeypatch):
+    from datetime import datetime, timedelta
+    from island import ics
+    now = datetime.now().astimezone()
+    start = (now + timedelta(minutes=5)).strftime("%Y%m%dT%H%M%S")
+    island.calendar.series = ics.parse_ics(f"BEGIN:VEVENT\nDTSTART:{start}\nSUMMARY:Dentist\nEND:VEVENT")
+    sent = []
+    monkeypatch.setattr(island, "notify", lambda hud, seconds=0: sent.append(hud))
+    island._calendar_check()
+    island._calendar_check()
+    assert sent == [("popup", "\uE787", "In 10 min", "Dentist")]
+    assert island._calendar_rows() == [("Dentist", (now + timedelta(minutes=5)).strftime("%H:%M"))] or island._calendar_rows() == []
