@@ -21,7 +21,7 @@ def _cos(d):
 
 
 def times(day, lat, lon, tz_hours, method=DEFAULT_METHOD, asr_factor=1, adj=None):
-    """{name: datetime.time}, rounded to the nearest minute, after ihtiyat and per-prayer `adj` minutes."""
+    """{name: datetime.time}, rounded up to the minute, after ihtiyat and per-prayer `adj` minutes."""
     fajr, isha = METHODS.get(method) or METHODS[DEFAULT_METHOD]
     d = day.toordinal() + 1721424.5 - 2451545.0  # Julian day at 0h UT
     g, q = 357.529 + 0.98560028 * d, 280.459 + 0.98564736 * d
@@ -44,7 +44,7 @@ def times(day, lat, lon, tz_hours, method=DEFAULT_METHOD, asr_factor=1, adj=None
     bonus = IHTIYAT if method == DEFAULT_METHOD or method not in METHODS else 0
     out = {}
     for name, h in zip(NAMES, raw):
-        m = round(h * 60) + bonus + (adj or {}).get(name, 0)
+        m = math.ceil(h * 60) + bonus + (adj or {}).get(name, 0)  # round up: never announce a prayer early
         out[name] = time(m // 60 % 24, m % 60)
     return out
 

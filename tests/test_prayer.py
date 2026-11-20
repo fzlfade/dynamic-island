@@ -19,6 +19,14 @@ def test_kemenag_jakarta():
         assert abs(mins(got[name]) - (h * 60 + m)) <= 2, (name, got[name], hhmm)
 
 
+def test_times_round_up_like_kemenag():
+    # schedules round up so a prayer is never announced early; this lands every Jakarta time within 1 min
+    got = prayer.times(DAY, *JAKARTA, 7, "Kemenag RI")
+    want = {"Subuh": 245, "Dzuhur": 702, "Ashar": 904, "Maghrib": 1074, "Isya": 1148}
+    for name, m in want.items():
+        assert abs(mins(got[name]) - m) <= 1, (name, got[name])
+
+
 def test_umm_al_qura_isha_is_maghrib_plus_90():
     t = prayer.times(DAY, 21.4225, 39.8262, 3, "Umm al-Qura")
     assert mins(t["Isya"]) - mins(t["Maghrib"]) == 90
