@@ -48,17 +48,23 @@ class Pomodoro:
 class FocusPage(Page):
     title = "Focus"
 
-    def __init__(self, notify):
+    def __init__(self, notify, repaint=lambda: None):
         self.notify = notify
+        self.repaint = repaint
         self.pomo = Pomodoro()
         self.minutes = {"short_break": 5, "long_break": 15}
+        self.idle_m = self._settings()["focus"]
         self.button = QRectF()
         self.timer = QTimer(interval=1000, timeout=lambda: self._tick(time.monotonic()))
 
+    @staticmethod
+    def _settings():
+        v = store.load_kv("settings.txt")
+        return {k: max(1, store.get_int(v, k, d)) for k, d in (("focus", 25), ("short_break", 5), ("long_break", 15))}
+
     def start(self):
-        v = store.load_kv("settings.txt")  # read now so edits apply to the next run
-        m = {k: max(1, store.get_int(v, k, d)) for k, d in (("focus", 25), ("short_break", 5), ("long_break", 15))}
-        self.minutes = m
+        m = self.minutes = self._settings()  # read now so edits apply to the next run
+        self.idle_m = m["focus"]
         self.pomo = Pomodoro(m["focus"] * 60, m["short_break"] * 60, m["long_break"] * 60)
         self.pomo.start(time.monotonic())
         self.timer.start()
@@ -66,10 +72,12 @@ class FocusPage(Page):
     def stop(self):
         self.pomo.stop()
         self.timer.stop()
+        self.idle_m = self._settings()["focus"]
 
     def _tick(self, now):
         was = self.pomo.phase
         new = self.pomo.tick(now)
+        self.repaint()  # refreshes the "● MM:SS" countdown once a second
         if new is None:
             return
         if was == "focus":
@@ -84,7 +92,7 @@ class FocusPage(Page):
         self.notify(("popup", GLYPH, *popup))
 
     def animating(self):
-        return self.pomo.phase != "idle"
+        return False  # the 1 s tick repaints; no frame timer needed for a countdown
 
     def compact_text(self):
         if self.pomo.phase == "idle":
@@ -95,8 +103,7 @@ class FocusPage(Page):
     def draw(self, p, r, island):
         running = self.pomo.phase != "idle"
         s = int(self.pomo.remaining(time.monotonic()) + 0.999)
-        idle_m = max(1, store.get_int(store.load_kv("settings.txt"), "focus", 25))
-        text = f"{s // 60:02d}:{s % 60:02d}" if running else f"{idle_m:02d}:00"
+        text = f"{s // 60:02d}:{s % 60:02d}" if running else f"{self.idle_m:02d}:00"
         island._text(p, QRectF(r.left(), r.top() + 8, r.width(), 44), text, 28, QColor(255, 255, 255), Qt.AlignCenter, bold=True)
         island._text(p, QRectF(r.left(), r.top() + 52, r.width(), 18), NAMES[self.pomo.phase], 10, QColor(160, 160, 160), Qt.AlignCenter)
         self.button = QRectF(r.center().x() - 36, r.bottom() - 46, 72, 26)

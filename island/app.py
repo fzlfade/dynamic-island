@@ -35,6 +35,7 @@ from island import network, store, system
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
+from island.todo import Todo
 
 COLLAPSED = (190.0, 34.0)
 COLLAPSED_PLAYING = (260.0, 34.0)
@@ -112,7 +113,9 @@ class Island(QWidget):
         self.add_page(MediaPage())
         self.today = TodayPage()
         self.add_page(self.today)
-        self.add_page(FocusPage(self.notify))
+        self.todo = Todo(self, self.notify)
+        self.today.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()))
+        self.add_page(FocusPage(self.notify, self.update))
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 
@@ -240,6 +243,7 @@ class Island(QWidget):
 
     def _check_fullscreen(self):
         self.setVisible(not system.fullscreen_app_running())
+        self.todo.tick()
         self._drain()  # reminders queued behind a fullscreen app show once it closes
         self._update_frame()  # picks up pages that started animating on their own
         self.check_language()  # also catches switches made with the mouse from the taskbar

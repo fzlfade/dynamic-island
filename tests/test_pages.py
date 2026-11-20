@@ -47,6 +47,7 @@ def test_compact_text_wins(island, fake_media):
 
 def test_today_rows_route_clicks(island, tmp_path):
     got = []
+    island.today.sections.clear()  # drop the built-in to-do section
     island.today.add_section(lambda: [("Water", "500 / 1500 ml")])
     island.today.add_section(lambda: [("Call mom", "09:30"), ("Buy milk", "")], lambda i, b: got.append((i, b)))
     island.page = 1

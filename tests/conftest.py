@@ -33,3 +33,9 @@ def island(qapp, fake_media):
     w = Island(fake_media)
     yield w
     w.close()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(tmp_path, monkeypatch):
+    from island import store
+    monkeypatch.setattr(store, "DIR_OVERRIDE", tmp_path)

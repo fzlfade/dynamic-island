@@ -40,7 +40,7 @@ def test_page_compact_text(qapp, island, monkeypatch):
     monkeypatch.setattr(focus.time, "monotonic", lambda: 100.0)
     page.start()
     monkeypatch.setattr(focus.time, "monotonic", lambda: 100.0 + 47)
-    assert page.compact_text() == "● 24:13" and page.animating()
+    assert page.compact_text() == "● 24:13" and not page.animating()
     page.stop()
     assert page.compact_text() is None
 
