@@ -31,7 +31,7 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import store, system
+from island import network, store, system
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
 
@@ -92,9 +92,11 @@ class Island(QWidget):
         self.brightness = None  # last reported %, None until Windows sends the initial value
         self.layout = None  # (foreground window, LANGID) last seen
         self.battery = None  # last battery_status()
+        self.network = None  # last network_state()
+        self.hud_notified = None  # (hud, seconds, created) while the current HUD came from notify()
         self.hud_until = 0.0
         self.queue = deque()  # (hud, seconds, created) reminders waiting for a visible, HUD-free island
-        self.hud_timer = QTimer(self, singleShot=True, timeout=self._hud_expired)
+        self.hud_timer = QTimer(self, singleShot=True, timeout=self._hud_expired, timerType=Qt.TimerType.PreciseTimer)
         self.pages = []
         self.page = 0
         self.wheel = 0  # accumulated angle delta, so touchpads switch once per notch
@@ -173,6 +175,7 @@ class Island(QWidget):
 
     def _show_hud(self, hud, seconds=HUD_SECONDS):
         self.hud = hud
+        self.hud_notified = None
         self.hud_until = time.monotonic() + seconds
         self.hud_timer.start(int(seconds * 1000) + 20)
         self.update()
@@ -192,9 +195,13 @@ class Island(QWidget):
             hud, seconds, created = self.queue.popleft()
             if time.monotonic() - created <= NOTIFY_MAX_AGE:
                 self._show_hud(hud, seconds)
+                self.hud_notified = (hud, seconds, created)
                 return
 
     def _hud_expired(self):
+        if self._hud_active():  # fired early: keep the popup alive until it is really due
+            self.hud_timer.start(int((self.hud_until - time.monotonic()) * 1000) + 20)
+            return
         self.update()
         self._drain()
 
@@ -205,18 +212,33 @@ class Island(QWidget):
             self._show_hud(("language", current[1], False))  # level slot carries the LANGID
         self.layout = current
 
+    def check_network(self):
+        try:
+            cur = network.network_state()
+        except Exception as e:  # unknown, not offline: keep the baseline and stay quiet
+            print(f"network_state failed: {e}", file=sys.stderr)
+            return
+        popup = network.network_popup(self.network, cur)
+        if popup:
+            self._show_hud(("popup", "", *popup))  # Wi-Fi glyph
+        self.network = cur
+
     def _check_fullscreen(self):
         self.setVisible(not system.fullscreen_app_running())
         self._drain()  # reminders queued behind a fullscreen app show once it closes
         self._update_frame()  # picks up pages that started animating on their own
         self.check_language()  # also catches switches made with the mouse from the taskbar
         self.check_battery()  # backup for the power broadcast
+        self.check_network()
 
     def _set_expand(self, v):
         self.expand = v
         self.update()
 
     def _animate_to(self, target):
+        if target >= 1.0 and self.hud_notified and self._hud_active():  # expanding hides the HUD: show the reminder again later
+            self.queue.appendleft(self.hud_notified)
+            self.hud_until, self.hud_notified = 0.0, None
         self.anim.stop()
         self.anim.setStartValue(self.expand)
         self.anim.setEndValue(target)
@@ -352,8 +374,8 @@ class Island(QWidget):
     def _draw_popup(self, p, r):
         _, glyph, title, subtitle = self.hud
         p.setFont(self._icon_font(22))
-        p.setPen(QColor(255, 255, 255))
-        p.drawText(QRectF(r.left() + 18, r.top(), 38, r.height()), Qt.AlignCenter, glyph)
+        p.setPen(QColor(140, 140, 140) if title == "Disconnected" else QColor(255, 255, 255))  # grey Wi-Fi glyph offline
+        p.drawText(QRectF(r.left() + 18,r.top(), 38, r.height()), Qt.AlignCenter, glyph)
         x = r.left() + 70  # same text column as the battery popup
         self._text(p, QRectF(x, r.top() + 12, r.right() - x - 22, 22), title, 11, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
         self._text(p, QRectF(x, r.top() + 33, r.right() - x - 22, 18), subtitle, 9, QColor(160, 160, 160), Qt.AlignLeft)

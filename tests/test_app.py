@@ -169,3 +169,55 @@ def test_autostart_roundtrip():
                 winreg.DeleteValue(k, name)
         except FileNotFoundError:
             pass
+
+
+def test_network_popup_and_errors(island, monkeypatch, tmp_path, capsys):
+    from island import network
+    island.network = (False, None)
+    monkeypatch.setattr(network, "network_state", lambda: (True, "Home"))
+    island.check_network()
+    assert island.hud == ("popup", "\uE701", "Connected", "Home") and island.network == (True, "Home")
+    assert island._island_rect().height() == app.BATTERY_POPUP[1]
+    island.grab().save(str(tmp_path / "wifi_on.png"))
+    island.check_network()  # unchanged: no new popup
+    island._show_hud(("volume", 0.5, False))
+    island.check_network()
+    assert island.hud[0] == "volume"
+    monkeypatch.setattr(network, "network_state", lambda: (False, None))
+    island.check_network()
+    assert island.hud[2:] == ("Disconnected", "No internet")
+    island.grab().save(str(tmp_path / "wifi_off.png"))
+
+    def boom():
+        raise OSError("winrt")
+    monkeypatch.setattr(network, "network_state", boom)
+    island._show_hud(("volume", 0.5, False))
+    island.check_network()
+    assert island.network == (False, None) and island.hud[0] == "volume"
+    assert "winrt" in capsys.readouterr().err
+
+
+def test_hud_timer_precise_and_restarts_early_fire(island):
+    assert island.hud_timer.timerType() == app.Qt.TimerType.PreciseTimer
+    island._show_hud(("volume", 0.5, False))
+    island.hud_timer.stop()
+    island._hud_expired()  # fired while still active: must re-arm, not finish
+    assert island.hud_timer.isActive()
+
+
+def test_notify_requeued_when_expanding(island):
+    island.notify(("popup", "x", "Due", "now"))
+    assert island.hud[2] == "Due" and not island.queue
+    island._animate_to(1.0)
+    assert [q[0][2] for q in island.queue] == ["Due"]
+    island.anim.stop()
+    island._set_expand(0.0)
+    island.hud_until = 0
+    island._drain()
+    assert island.hud[2] == "Due"
+
+
+def test_instant_hud_not_requeued(island):
+    island._show_hud(("volume", 0.5, False))
+    island._animate_to(1.0)
+    assert not island.queue
