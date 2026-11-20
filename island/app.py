@@ -31,9 +31,9 @@ from ctypes import wintypes
 
 from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
+from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, notifications, ocr, prayer, shelf, store, system, weather
+from island import ask, ics, network, notifications, ocr, prayer, shelf, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -154,6 +154,12 @@ class Island(QWidget):
         self.setAcceptDrops(True)
         self.press_at = None  # where a left-button press started, for dragging shelf chips out
         self.ocr_done.connect(self._ocr_finished)
+        self.ask_page = ask.AskPage()
+        self.add_page(self.ask_page)
+        self.asker = ask.Asker()  # its signals are delivered to these Island slots on the UI thread
+        self.asker.chunk.connect(self._ask_chunk)
+        self.asker.finished.connect(self._ask_finished)
+        self.asker.failed.connect(self._ask_failed)
         self.notifier = None  # built on the worker: Qt's UI thread is a COM STA and the listener must live off it
         self._notif_thread = None
         self.notified.connect(lambda app_name, title: self._show_hud(("popup", "", app_name, title), NOTIFY_SECONDS))
@@ -203,7 +209,31 @@ class Island(QWidget):
             self.check_battery()
         if msg.message == 0x312 and msg.wParam == ocr.HOTKEY_ID:  # WM_HOTKEY: Ctrl+Alt+T
             self.start_ocr()
+        if msg.message == 0x312 and msg.wParam == ask.HOTKEY_ID:  # WM_HOTKEY: Ctrl+Alt+Space
+            self.start_ask()
         return False, 0
+
+    def start_ask(self):
+        question, ok = QInputDialog.getText(None, "Ask", "")  # its own window takes the typing, never the island
+        if not ok or not question.strip():
+            return
+        self.ask_page.start(question.strip())
+        self.page = self.pages.index(self.ask_page)
+        self._animate_to(1.0)
+        self._update_frame()
+        self.asker.ask(question.strip())
+
+    def _ask_chunk(self, text):
+        self.ask_page.add(text)
+        self.update()
+
+    def _ask_finished(self, _):
+        self.ask_page.finish()
+        self.update()
+
+    def _ask_failed(self, message):
+        self.ask_page.fail(message)
+        self.update()
 
     def start_ocr(self):
         self.picker = ocr.RegionPicker()  # kept on self so it isn't collected while open
@@ -683,4 +713,6 @@ def main():
     system.install_brightness(island)
     if not ctypes.windll.user32.RegisterHotKey(int(island.winId()), ocr.HOTKEY_ID, 0x1 | 0x2 | 0x4000, ord("T")):
         print("ocr: Ctrl+Alt+T is taken by another app", file=sys.stderr)  # MOD_ALT|MOD_CONTROL|MOD_NOREPEAT
+    if not ctypes.windll.user32.RegisterHotKey(int(island.winId()), ask.HOTKEY_ID, 0x1 | 0x2 | 0x4000, 0x20):
+        print("ask: Ctrl+Alt+Space is taken by another app", file=sys.stderr)
     sys.exit(app.exec())

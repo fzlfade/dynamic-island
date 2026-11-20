@@ -1,7 +1,7 @@
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
-from island import app, focus, pages, shelf
+from island import app, ask, focus, pages, shelf
 
 
 def _wheel(island, dy):
@@ -12,7 +12,7 @@ def _wheel(island, dy):
 
 def test_wheel_switches_pages(island):
     assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, pages.TodayPage, focus.FocusPage,
-                                                 shelf.ShelfPage]
+                                                 shelf.ShelfPage, ask.AskPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
