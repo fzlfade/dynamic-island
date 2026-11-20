@@ -1,7 +1,7 @@
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
-from island import app, focus, pages
+from island import app, focus, pages, shelf
 
 
 def _wheel(island, dy):
@@ -11,7 +11,8 @@ def _wheel(island, dy):
 
 
 def test_wheel_switches_pages(island):
-    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, pages.TodayPage, focus.FocusPage]
+    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, pages.TodayPage, focus.FocusPage,
+                                                 shelf.ShelfPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
@@ -19,15 +20,16 @@ def test_wheel_switches_pages(island):
     assert island.page == 1
     _wheel(island, -120)
     assert island.page == 2 and island.pages[2] is island.todo_page
-    _wheel(island, -120)
-    _wheel(island, -120)
+    for _ in range(len(island.pages) - 2):
+        _wheel(island, -120)
     assert island.page == 0, "wraps around"
 
 
 def test_page_dots_drawn(island):
     island._set_expand(1.0)
     img = island.grab().toImage()
-    c = img.pixelColor(app.WIN_W // 2 + 5, int(app.EXPANDED[1] - 8))
+    dot = island.page_hits[1].center()  # an inactive dot: grey, not the black background
+    c = img.pixelColor(int(dot.x()), int(dot.y()))
     assert (c.red(), c.green(), c.blue()) != (0, 0, 0)
 
 
@@ -43,12 +45,14 @@ def test_page_buttons_switch_pages(island):
     assert island.page == 2, "clicking a dot jumps to that page"
     _click_at(island, island.page_hits["next"].center())
     assert island.page == 3
+    last = len(island.pages) - 1
+    island.page = last
     island.grab()
     _click_at(island, island.page_hits["next"].center())
     assert island.page == 0, "next arrow wraps"
     island.grab()
     _click_at(island, island.page_hits["prev"].center())
-    assert island.page == 3, "prev arrow wraps backwards"
+    assert island.page == last, "prev arrow wraps backwards"
     assert all(r.width() >= 12 and r.height() >= 16 for r in island.page_hits.values()), "big enough to hit"
 
 

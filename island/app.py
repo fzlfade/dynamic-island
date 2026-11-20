@@ -33,10 +33,11 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, prayer, store, system, weather
+from island import ics, network, prayer, shelf, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
+from island.shelf import ShelfPage
 from island.todo import Todo
 from island.water import Water
 
@@ -143,6 +144,12 @@ class Island(QWidget):
         self.todo_page.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()), pin_last=True)
         self.add_page(self.todo_page)
         self.add_page(FocusPage(self.notify, self.update))
+        if store.get_int(store.load_kv("settings.txt"), "shelf_clear", 0) == 1:
+            shelf.save([])
+        self.shelf_page = ShelfPage(shelf.load())
+        self.add_page(self.shelf_page)
+        self.setAcceptDrops(True)
+        self.press_at = None  # where a left-button press started, for dragging shelf chips out
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 
@@ -359,7 +366,40 @@ class Island(QWidget):
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
     # --- input ---------------------------------------------------------------
+    def mousePressEvent(self, e):
+        self.press_at = e.position() if e.button() == Qt.LeftButton else None
+
+    def drop_mime(self, mime):
+        """Shelf the dropped files/text/links and open the island on the Shelf page."""
+        items = shelf.items_from_mime(mime, shelf.store_dir())
+        if items:
+            self.shelf_page.add(items)
+            self.page = self.pages.index(self.shelf_page)
+            self.update()
+        return bool(items)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() or e.mimeData().hasText():
+            e.acceptProposedAction()
+            self.leave_delay.stop()
+            self.page = self.pages.index(self.shelf_page)
+            self._animate_to(1.0)
+
+    def dragLeaveEvent(self, e):
+        self.leave_delay.start()
+
+    def dropEvent(self, e):
+        if self.drop_mime(e.mimeData()):
+            e.acceptProposedAction()
+        self.leave_delay.start()
+
     def mouseMoveEvent(self, e):
+        if (self.press_at is not None and e.buttons() & Qt.LeftButton and self.expand >= 0.5
+                and (e.position() - self.press_at).manhattanLength() >= QApplication.startDragDistance()):
+            start, self.press_at = self.press_at, None
+            drag = getattr(self.pages[self.page], "drag", None)
+            if drag and drag(start, self):
+                return
         inside = self._island_rect().contains(e.position())
         if inside and not self.hovered:
             self.leave_delay.stop()
