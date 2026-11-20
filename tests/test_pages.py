@@ -48,7 +48,6 @@ def test_compact_text_wins(island, fake_media):
 
 def test_today_rows_route_clicks(island, tmp_path):
     got = []
-    island.today.add_section(lambda: [("Water", "500 / 1500 ml")])
     island.today.add_section(lambda: [("Call mom", "09:30"), ("Buy milk", "")], lambda i, b: got.append((i, b)))
     island.page = 1
     island._set_expand(1.0)
@@ -65,6 +64,7 @@ def test_today_empty_and_row_cap(island, tmp_path):
     island.page = 1
     island._set_expand(1.0)
     island.grab().save(str(tmp_path / "today_empty.png"))
+    island.today.sections.clear()
     island.today.add_section(lambda: [(f"row {i}", "") for i in range(8)])
     island.grab()
     assert len(island.today.hits) == 5
@@ -88,5 +88,5 @@ def test_pin_last_keeps_last_row_and_index(island, qapp):
     assert got == [5, 0]
 
 
-def test_today_page_is_empty_by_default(island):
-    assert island.today.sections == [] and island.todo_page.title == "To-do"
+def test_today_page_has_water_row_by_default(island):
+    assert [island.today.sections[0][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "To-do"

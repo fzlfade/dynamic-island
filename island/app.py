@@ -25,6 +25,7 @@ import sys
 import time
 import winreg
 from collections import deque
+from datetime import datetime
 from ctypes import wintypes
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
@@ -36,6 +37,7 @@ from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
 from island.todo import Todo
+from island.water import Water
 
 COLLAPSED = (190.0, 34.0)
 COLLAPSED_PLAYING = (260.0, 34.0)
@@ -114,6 +116,11 @@ class Island(QWidget):
         self.today = TodayPage()
         self.add_page(self.today)
         self.todo = Todo(self, self.notify)
+        self.water = Water(store.load_kv("water.txt"))
+        self.water.roll(datetime.now())
+        self.popup_actions = {"Time to Drink": self.drink}  # left-click on the collapsed island while that popup shows
+        self.today.add_section(lambda: [("Water", self.water.status())])
+        QTimer(self, interval=60_000, timeout=self._water_check).start()
         self.todo_page = TodayPage("To-do")
         self.todo_page.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()), pin_last=True)
         self.add_page(self.todo_page)
@@ -188,6 +195,19 @@ class Island(QWidget):
         self.hud_until = time.monotonic() + seconds
         self.hud_timer.start(int(seconds * 1000) + 20)
         self.update()
+
+    def drink(self):
+        popup = self.water.drink(datetime.now())
+        store.save_kv("water.txt", self.water.to_kv())
+        if popup:
+            self.notify(("popup", "", *popup))
+        self.update()
+
+    def _water_check(self):
+        hud = self.water.remind(datetime.now())
+        if hud:
+            store.save_kv("water.txt", self.water.to_kv())
+            self.notify(hud)
 
     def _hud_active(self):
         return time.monotonic() < self.hud_until
@@ -305,6 +325,14 @@ class Island(QWidget):
         self.leave_delay.start()
 
     def mouseReleaseEvent(self, e):
+        if (self.expand < 0.5 and e.button() == Qt.LeftButton and self._hud_active() and self.hud[0] == "popup"
+                and self.hud[2] in self.popup_actions):
+            self.hud_until = 0.0  # dismiss first so a follow-up popup (refill) can show
+            self.hud_timer.stop()
+            self.popup_actions[self.hud[2]]()
+            self._drain()
+            self.update()
+            return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
             self.pages[self.page].click(e.position(), e.button(), self)
             self._update_frame()
