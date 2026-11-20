@@ -39,3 +39,16 @@ def island(qapp, fake_media):
 def _isolated_store(tmp_path, monkeypatch):
     from island import store
     monkeypatch.setattr(store, "DIR_OVERRIDE", tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _no_weather_io(monkeypatch):
+    from island import weather
+
+    def no_geo():
+        raise OSError("tests never use the real Geolocator")
+    monkeypatch.setattr(weather, "_geolocate", no_geo)
+
+    def no_net(req, timeout):
+        raise OSError("tests never touch the network")
+    monkeypatch.setattr(weather.urllib.request, "urlopen", no_net)

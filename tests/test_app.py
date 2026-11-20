@@ -241,14 +241,30 @@ def test_audio_popup_and_errors(island, monkeypatch, tmp_path, capsys):
 
 
 def test_calendar_rows_and_reminder(island, monkeypatch):
-    from datetime import datetime, timedelta
-    from island import ics
-    now = datetime.now().astimezone()
-    start = (now + timedelta(minutes=5)).strftime("%Y%m%dT%H%M%S")
-    island.calendar.series = ics.parse_ics(f"BEGIN:VEVENT\nDTSTART:{start}\nSUMMARY:Dentist\nEND:VEVENT")
+    from datetime import datetime
+    from island import app, ics
+    fixed = datetime(2026, 6, 1, 12, 0).astimezone()  # fixed noon: independent of the wall clock
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+    monkeypatch.setattr(app, "datetime", FakeDT)
+    island.calendar.series = ics.parse_ics("BEGIN:VEVENT\nDTSTART:20260601T120500\nSUMMARY:Dentist\nEND:VEVENT")
     sent = []
     monkeypatch.setattr(island, "notify", lambda hud, seconds=0: sent.append(hud))
     island._calendar_check()
     island._calendar_check()
     assert sent == [("popup", "\uE787", "In 10 min", "Dentist")]
-    assert island._calendar_rows() == [("Dentist", (now + timedelta(minutes=5)).strftime("%H:%M"))]
+    assert island._calendar_rows() == [("Dentist", "12:05")]
+
+
+def test_weather_row_is_first_on_today(island):
+    from island import weather
+    island.weather = None
+    assert island._weather_rows() == []
+    w = weather.Weather(0, 0)
+    w.now = (27.3, "Partly cloudy")
+    island.weather, island.weather_place = w, "Jakarta"
+    assert island._weather_rows() == [("Jakarta", "27\u00b0 Partly cloudy")]
+    assert island.today.sections[0][0] == island._weather_rows

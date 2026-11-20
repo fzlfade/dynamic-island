@@ -22,6 +22,7 @@ import ctypes
 import math
 import os
 import sys
+import threading
 import time
 import winreg
 from collections import deque
@@ -32,7 +33,7 @@ from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAn
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ics, network, store, system
+from island import ics, network, store, system, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -116,6 +117,10 @@ class Island(QWidget):
         self.today = TodayPage()
         self.add_page(self.today)
         self.todo = Todo(self, self.notify)
+        self.weather, self.weather_place = None, ""  # set by the worker once the location is known
+        self.today.add_section(self._weather_rows)  # first, so the row cap never trims it
+        threading.Thread(target=self._start_weather, daemon=True).start()
+        QTimer(self, interval=1_800_000, timeout=lambda: self.weather and self.weather.refresh()).start()
         self.water = Water(store.load_kv("water.txt"))
         self.water.roll(datetime.now())
         self.popup_actions = {"Time to Drink": self.drink}  # left-click on the collapsed island while that popup shows
@@ -215,6 +220,16 @@ class Island(QWidget):
         if self.cal_rows[0] is not series or self.cal_rows[1] != day:
             self.cal_rows = (series, day, ics.rows(series, datetime.now().astimezone()))
         return self.cal_rows[2]
+
+    def _start_weather(self):  # worker thread: the Geolocator read may take seconds; only rebinds attributes
+        lat, lon, self.weather_place = weather.location(store.load_kv("settings.txt"))
+        w = weather.Weather(lat, lon)
+        w.fetch_once()
+        self.weather = w
+
+    def _weather_rows(self):
+        w = self.weather
+        return [(self.weather_place, f"{round(w.now[0])}° {w.now[1]}")] if w and w.now else []
 
     def _calendar_check(self):
         for summary in ics.due_reminders(self.calendar.series, datetime.now().astimezone(), self.reminded):

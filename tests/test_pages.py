@@ -89,4 +89,4 @@ def test_pin_last_keeps_last_row_and_index(island, qapp):
 
 
 def test_today_page_has_water_row_by_default(island):
-    assert [island.today.sections[0][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "To-do"
+    assert [island.today.sections[1][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "To-do"

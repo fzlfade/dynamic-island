@@ -1,0 +1,95 @@
+import io
+import json
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+from island import store, weather
+
+MET = (Path(__file__).parent / "data" / "met.json").read_bytes()
+
+
+class Resp(io.BytesIO):
+    def __init__(self, body, headers=None):
+        super().__init__(body)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def test_parse_met_fixture():
+    assert weather.parse_met(json.loads(MET)) == (27.3, "Partly cloudy")
+
+
+@pytest.mark.parametrize("code,word", [
+    ("clearsky_night", "Clear"), ("fair_day", "Mostly clear"), ("partlycloudy_night", "Partly cloudy"),
+    ("cloudy", "Cloudy"), ("fog", "Fog"), ("lightrain", "Light rain"), ("rain", "Rain"),
+    ("heavyrain", "Heavy rain"), ("sleet", "Sleet"), ("snow", "Snow"),
+    ("rainandthunder", "Thunderstorm"), ("heavyrainshowersandthunder_day", "Thunderstorm"),
+    ("rainshowers_day", "Rain"), ("lightrainshowers_night", "Light rain"), ("heavyrainshowers_day", "Heavy rain"),
+])
+def test_symbol_words(code, word):
+    assert weather.describe(code) == word
+
+
+def test_url_rounds_to_4_decimals():
+    assert weather.Weather(-6.20881234, 106.84559999).url == \
+        "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=-6.2088&lon=106.8456"
+
+
+def test_fetch_sets_now_sends_ua_and_honours_expires(monkeypatch):
+    seen = []
+
+    def fake(req, timeout):
+        seen.append((req.full_url, req.get_header("User-agent"), timeout))
+        return Resp(MET, {"Expires": "Sat, 21 Nov 2026 12:00:00 GMT"})
+    monkeypatch.setattr(weather.urllib.request, "urlopen", fake)
+    w = weather.Weather(-6.2088, 106.8456)
+    w.fetch_once()
+    assert w.now == (27.3, "Partly cloudy")
+    assert seen[0][1:] == ("DynamicIsland/0.1", 10)
+    w.fetch_once()  # before Expires: no second request
+    assert len(seen) == 1
+
+
+def test_minimum_30_minutes_between_fetches(monkeypatch):
+    monkeypatch.setattr(weather.urllib.request, "urlopen", lambda req, timeout: Resp(MET, {"Expires": "Mon, 01 Jan 2001 00:00:00 GMT"}))
+    clock = [2_000_000_000.0]
+    monkeypatch.setattr(weather.time, "time", lambda: clock[0])
+    w = weather.Weather(0, 0)
+    w.fetch_once()
+    assert w.next_ok == 2_000_000_000.0 + 1800
+
+
+def test_weather_failure_keeps_last(monkeypatch, capsys):
+    monkeypatch.setattr(weather.urllib.request, "urlopen", lambda req, timeout: Resp(MET))
+    w = weather.Weather(-6.2088, 106.8456)
+    w.fetch_once()
+    w.next_ok = 0
+
+    def boom(req, timeout):
+        raise urllib.error.URLError("down -6.2088")
+    monkeypatch.setattr(weather.urllib.request, "urlopen", boom)
+    w.fetch_once()
+    assert w.now == (27.3, "Partly cloudy")
+    err = capsys.readouterr().err
+    assert "URLError" in err and "6.2088" not in err
+
+
+def test_location_geolocator_failure_is_jakarta(monkeypatch):
+    def boom():
+        raise OSError("denied")
+    monkeypatch.setattr(weather, "_geolocate", boom)
+    assert weather.location({}) == (-6.2088, 106.8456, "Jakarta")
+
+
+def test_location_uses_settings_then_saves_geolocator(monkeypatch):
+    monkeypatch.setattr(weather, "_geolocate", lambda: (1.234567, 2.345678))
+    assert weather.location({"lat": "5", "lon": "6", "place": "Home"}) == (5.0, 6.0, "Home")
+    assert weather.location({}) == (1.2346, 2.3457, "My location")
+    assert store.load_kv("settings.txt") == {"lat": "1.2346", "lon": "2.3457", "place": "My location"}
