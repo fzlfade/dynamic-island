@@ -21,6 +21,8 @@ def test_bad_task_lines_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DIR_OVERRIDE", tmp_path)
     store.save_lines("tasks.txt", ["garbage", "0|x|bad", "0|570|ok", "1|-1|done"])
     assert todo.load_tasks() == [Task(False, 570, "ok"), Task(True, None, "done")]
+    store.save_lines("tasks.txt", ["0|570|", "0|570|x"])
+    assert todo.load_tasks() == [Task(False, 570, "x")], "empty text skipped"
 
 
 def test_due_basic():
@@ -112,3 +114,19 @@ def test_focus_draw_does_not_read_settings(island, monkeypatch):
 
 def test_store_isolated(tmp_path):
     assert store.DIR_OVERRIDE is not None
+
+
+def test_six_tasks_add_row_still_clickable(island, monkeypatch):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    island.todo.tasks = [Task(False, None, f"t{i}") for i in range(6)]
+    img = QImage(400, 200, QImage.Format_ARGB32)
+    p = QPainter(img)
+    island.todo_page.draw(p, QRectF(0, 0, 400, 200), island)
+    p.end()
+    hits = island.todo_page.hits
+    assert len(hits) == 5 and [h[2] for h in hits] == [0, 1, 2, 3, 6]
+    called = []
+    monkeypatch.setattr(todo.QInputDialog, "getText", staticmethod(lambda *a: (called.append(1) or "new", True)))
+    assert island.todo_page.click(hits[-1][0].center(), Qt.LeftButton, island)
+    assert called and island.todo.tasks[-1].text == "new"

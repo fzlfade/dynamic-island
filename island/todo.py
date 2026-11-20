@@ -32,7 +32,8 @@ def load_tasks():
     for line in store.load_lines("tasks.txt"):
         try:
             done, at, text = line.split("|", 2)
-            out.append(Task(done == "1", None if int(at) < 0 else int(at), text))
+            if text:
+                out.append(Task(done == "1", None if int(at) < 0 else int(at), text))
         except ValueError:
             continue
     return out

@@ -11,14 +11,15 @@ def _wheel(island, dy):
 
 
 def test_wheel_switches_pages(island):
-    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, focus.FocusPage]
+    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, pages.TodayPage, focus.FocusPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
     _wheel(island, -120)
     assert island.page == 1
     _wheel(island, -120)
-    assert island.page == 2
+    assert island.page == 2 and island.pages[2] is island.todo_page
+    _wheel(island, -120)
     _wheel(island, -120)
     assert island.page == 0, "wraps around"
 
@@ -26,7 +27,7 @@ def test_wheel_switches_pages(island):
 def test_page_dots_drawn(island):
     island._set_expand(1.0)
     img = island.grab().toImage()
-    c = img.pixelColor(app.WIN_W // 2 + 10, int(app.EXPANDED[1] - 8))
+    c = img.pixelColor(app.WIN_W // 2 + 5, int(app.EXPANDED[1] - 8))
     assert (c.red(), c.green(), c.blue()) != (0, 0, 0)
 
 
@@ -47,7 +48,6 @@ def test_compact_text_wins(island, fake_media):
 
 def test_today_rows_route_clicks(island, tmp_path):
     got = []
-    island.today.sections.clear()  # drop the built-in to-do section
     island.today.add_section(lambda: [("Water", "500 / 1500 ml")])
     island.today.add_section(lambda: [("Call mom", "09:30"), ("Buy milk", "")], lambda i, b: got.append((i, b)))
     island.page = 1
@@ -68,3 +68,25 @@ def test_today_empty_and_row_cap(island, tmp_path):
     island.today.add_section(lambda: [(f"row {i}", "") for i in range(8)])
     island.grab()
     assert len(island.today.hits) == 5
+
+
+def test_pin_last_keeps_last_row_and_index(island, qapp):
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+    got = []
+    page = pages.TodayPage()
+    page.add_section(lambda: [("Water", "")])
+    page.add_section(lambda: [(f"t{i}", "") for i in range(5)] + [("+ Add", "")], lambda i, b: got.append(i), pin_last=True)
+    img = QImage(400, 200, QImage.Format_ARGB32)
+    p = QPainter(img)
+    page.draw(p, QRectF(0, 0, 400, 200), island)
+    p.end()
+    assert len(page.hits) == 5
+    page.click(page.hits[0][0].center(), Qt.LeftButton, island)  # info row, no handler
+    page.click(page.hits[-1][0].center(), Qt.LeftButton, island)
+    page.click(page.hits[1][0].center(), Qt.LeftButton, island)
+    assert got == [5, 0]
+
+
+def test_today_page_is_empty_by_default(island):
+    assert island.today.sections == [] and island.todo_page.title == "To-do"

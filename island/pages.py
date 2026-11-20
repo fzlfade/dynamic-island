@@ -72,20 +72,24 @@ class TodayPage(Page):
     title = "Today"
     MAX_ROWS, TOP, ROW_H = 5, 12.0, 22.0
 
-    def __init__(self):
-        self.sections = []  # (rows callable, on_click or None)
+    def __init__(self, title="Today"):
+        self.title = title
+        self.sections = []  # (rows callable, on_click or None, pin_last)
         self.hits = []  # (row rect, on_click, index within its section), rebuilt on every draw
 
-    def add_section(self, rows, on_click=None):
-        self.sections.append((rows, on_click))
+    def add_section(self, rows, on_click=None, pin_last=False):
+        """pin_last: when the row cap truncates, keep this section's last row (e.g. "+ Add") and drop earlier ones."""
+        self.sections.append((rows, on_click, pin_last))
 
     def draw(self, p, r, island):
         self.hits = []
         fm = QFontMetrics(QFont("Segoe UI Variable Text", 10))  # same font island._text uses at size 10
-        for rows, on_click in self.sections:
-            for i, (left, right) in enumerate(rows()):
-                if len(self.hits) == self.MAX_ROWS:
-                    break
+        for rows, on_click, pin_last in self.sections:
+            items = list(enumerate(rows()))
+            room = self.MAX_ROWS - len(self.hits)
+            if len(items) > room:
+                items = items[:room - 1] + items[-1:] if pin_last and room > 0 else items[:room]
+            for i, (left, right) in items:
                 row = QRectF(r.left() + 22, r.top() + self.TOP + len(self.hits) * self.ROW_H, r.width() - 44, self.ROW_H)
                 right_w = fm.horizontalAdvance(right) + 12 if right else 0
                 island._text(p, row.adjusted(0, 0, -right_w, 0), left, 10, QColor(255, 255, 255), Qt.AlignLeft)
