@@ -24,6 +24,7 @@ import os
 import sys
 import time
 import winreg
+from collections import deque
 from ctypes import wintypes
 
 from PySide6.QtCore import QEasingCurve, QPointF, QRectF, Qt, QTimer, QVariantAnimation
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon,
 
 from island import store, system
 from island.media import Media, line_at
+from island.pages import MediaPage, TodayPage
 
 COLLAPSED = (190.0, 34.0)
 COLLAPSED_PLAYING = (260.0, 34.0)
@@ -40,8 +42,10 @@ HUD = (300.0, 34.0)
 HUD_SECONDS = 1.5
 BATTERY_POPUP = (340.0, 64.0)
 BATTERY_SECONDS = 3.0
-EXPANDED = (400.0, 124.0)
-WIN_W, WIN_H = 440, 140  # window fits the largest island; transparent pixels are click-through
+EXPANDED = (400.0, 150.0)
+WIN_W, WIN_H = 440, 170  # window fits the largest island; transparent pixels are click-through
+NOTIFY_SECONDS = 4.0
+NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dynamic_island.py")
@@ -89,12 +93,20 @@ class Island(QWidget):
         self.layout = None  # (foreground window, LANGID) last seen
         self.battery = None  # last battery_status()
         self.hud_until = 0.0
-        self.hud_timer = QTimer(self, singleShot=True, timeout=self.update)  # repaint once when the HUD expires
+        self.queue = deque()  # (hud, seconds, created) reminders waiting for a visible, HUD-free island
+        self.hud_timer = QTimer(self, singleShot=True, timeout=self._hud_expired)
+        self.pages = []
+        self.page = 0
+        self.wheel = 0  # accumulated angle delta, so touchpads switch once per notch
 
         self.anim = QVariantAnimation(self, duration=420, easingCurve=QEasingCurve.OutBack)
         self.anim.valueChanged.connect(self._set_expand)
+        self.anim.finished.connect(self._drain)  # reminders held while the island was open
         self.leave_delay = QTimer(self, singleShot=True, interval=350, timeout=lambda: self._animate_to(0.0))
-        self.frame = QTimer(self, interval=16, timeout=self.update)  # only runs while bars animate
+        self.frame = QTimer(self, interval=16, timeout=self._frame_tick)  # only runs while something animates
+        self.add_page(MediaPage())
+        self.today = TodayPage()
+        self.add_page(self.today)
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 
@@ -110,8 +122,22 @@ class Island(QWidget):
             self.art = QPixmap()
             self.art.loadFromData(info.pop("thumb"))
         self.info = info
-        (self.frame.start if info.get("playing") else self.frame.stop)()
+        self._update_frame()
         self.update()
+
+    def add_page(self, page):
+        self.pages.append(page)
+        self.update()
+
+    def _update_frame(self):
+        if not (self.info.get("playing") or any(pg.animating() for pg in self.pages)):
+            self.frame.stop()
+        elif not self.frame.isActive():
+            self.frame.start()
+
+    def _frame_tick(self):
+        self.update()
+        self._update_frame()
 
     def show_volume(self, level, muted):
         self._show_hud(("volume", level, muted))
@@ -154,6 +180,24 @@ class Island(QWidget):
     def _hud_active(self):
         return time.monotonic() < self.hud_until
 
+    def notify(self, hud, seconds=NOTIFY_SECONDS):
+        """Queue a reminder: shown when the island is visible and no HUD is up, one at a time."""
+        self.queue.append((hud, seconds, time.monotonic()))
+        self._drain()
+
+    def _drain(self):
+        if not self.isVisible() or self._hud_active() or self.expand >= 0.5:  # HUDs only draw collapsed
+            return
+        while self.queue:
+            hud, seconds, created = self.queue.popleft()
+            if time.monotonic() - created <= NOTIFY_MAX_AGE:
+                self._show_hud(hud, seconds)
+                return
+
+    def _hud_expired(self):
+        self.update()
+        self._drain()
+
     def check_language(self):
         current = system.foreground_layout()
         # only a change within the same window counts: with per-app input, switching windows changes the layout too
@@ -163,6 +207,8 @@ class Island(QWidget):
 
     def _check_fullscreen(self):
         self.setVisible(not system.fullscreen_app_running())
+        self._drain()  # reminders queued behind a fullscreen app show once it closes
+        self._update_frame()  # picks up pages that started animating on their own
         self.check_language()  # also catches switches made with the mouse from the taskbar
         self.check_battery()  # backup for the power broadcast
 
@@ -183,9 +229,16 @@ class Island(QWidget):
         lyrics = self.info.get("lyrics")
         return (line_at(lyrics, self._pos()) or "♪") if lyrics else ""  # ♪ during instrumental gaps
 
+    def _compact_label(self):
+        for pg in self.pages:
+            text = pg.compact_text()
+            if text is not None:
+                return text
+        return self._lyric()
+
     def _island_rect(self):
         if self._hud_active():
-            cw, ch = BATTERY_POPUP if self.hud[0] == "battery" else HUD
+            cw, ch = BATTERY_POPUP if self.hud[0] in ("battery", "popup") else HUD
         elif not self.info:
             cw, ch = COLLAPSED
         else:
@@ -208,13 +261,19 @@ class Island(QWidget):
         self.leave_delay.start()
 
     def mouseReleaseEvent(self, e):
-        for action, rect in self.buttons.items():
-            if rect.contains(e.position()):
-                self.media.send(action)
-                # optimistic flip so the icon reacts before the next 1 s poll
-                if action == "toggle" and self.info:
-                    self._on_media({**self.info, "playing": not self.info["playing"],
-                                    "pos": self._pos(), "pos_at": time.monotonic()})
+        if self.expand >= 0.5:  # page hit areas are only drawn while expanded
+            self.pages[self.page].click(e.position(), e.button(), self)
+            self._update_frame()
+            self.update()
+
+    def wheelEvent(self, e):
+        if self.expand <= 0.5:
+            return
+        self.wheel += e.angleDelta().y()
+        if abs(self.wheel) >= 120:
+            self.page = (self.page + (1 if self.wheel < 0 else -1)) % len(self.pages)
+            self.wheel = 0
+            self.update()
 
     # --- drawing -------------------------------------------------------------
     def paintEvent(self, _):
@@ -229,35 +288,30 @@ class Island(QWidget):
         if self._hud_active() and self.expand < 0.5:
             self._draw_hud(p, r)
             return
-        if not self.info:
-            self._text(p, QRectF(r), "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
-            return
-        if self.expand < 0.5:
-            self._draw_compact(p, r, 1 - self.expand * 2)
+        if self.expand >= 0.5:
+            p.setOpacity(min((self.expand - 0.5) * 2, 1.0))
+            self.pages[self.page].draw(p, r, self)
+            self._draw_dots(p, r)
+        elif not self.info:
+            self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
         else:
-            self._draw_expanded(p, r, (self.expand - 0.5) * 2)
+            self._draw_compact(p, r, 1 - self.expand * 2)
 
     def _draw_compact(self, p, r, alpha):
         p.setOpacity(alpha)
         self._draw_art(p, QRectF(r.left() + 10, r.top() + 6, 22, 22), 6)
         self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
         lyric_box = QRectF(r.left() + 42, r.top(), r.width() - 88, r.height())
-        self._text(p, lyric_box, self._lyric(), 10, QColor(255, 255, 255), Qt.AlignCenter)
+        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter)
 
-    def _draw_expanded(self, p, r, alpha):
-        p.setOpacity(min(alpha, 1.0))
-        art = QRectF(r.left() + 18, r.top() + 16, 64, 64)
-        self._draw_art(p, art, 14)
-        x = art.right() + 14
-        text_w = r.right() - x - 18
-        self._text(p, QRectF(x, art.top() + 2, text_w, 22), self.info["title"], 12, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
-        self._text(p, QRectF(x, art.top() + 24, text_w, 20), self.info["artist"], 10, QColor(160, 160, 160), Qt.AlignLeft)
-        self._text(p, QRectF(x, art.top() + 44, text_w - 44, 20), self._lyric(), 10, QColor(120, 220, 140), Qt.AlignLeft)
-        self._draw_bars(p, QPointF(r.right() - 34, art.top() + 52))
-        cy, cx = r.bottom() - 22, r.center().x()
-        for action, dx in (("prev", -56), ("toggle", 0), ("next", 56)):
-            self.buttons[action] = QRectF(cx + dx - 18, cy - 14, 36, 28)
-            self._draw_icon(p, action, QPointF(cx + dx, cy))
+    def _draw_dots(self, p, r):
+        n = len(self.pages)
+        if n < 2:
+            return
+        p.setPen(Qt.NoPen)
+        for i in range(n):
+            p.setBrush(QColor(255, 255, 255) if i == self.page else QColor(90, 90, 95))
+            p.drawEllipse(QPointF(r.center().x() + (i - (n - 1) / 2) * 10, r.bottom() - 8), 3, 3)
 
     def _draw_art(self, p, rect, radius):
         clip = QPainterPath()
@@ -295,9 +349,28 @@ class Island(QWidget):
         self._text(p, QRectF(x, r.top() + 33, r.right() - x - 70, 18), subtitle, 9, QColor(160, 160, 160), Qt.AlignLeft)
         self._text(p, QRectF(r.right() - 84, r.top(), 62, r.height()), f"{round(level * 100)}%", 15, fill, Qt.AlignRight, bold=True)
 
+    def _draw_popup(self, p, r):
+        _, glyph, title, subtitle = self.hud
+        p.setFont(self._icon_font(22))
+        p.setPen(QColor(255, 255, 255))
+        p.drawText(QRectF(r.left() + 18, r.top(), 38, r.height()), Qt.AlignCenter, glyph)
+        x = r.left() + 70  # same text column as the battery popup
+        self._text(p, QRectF(x, r.top() + 12, r.right() - x - 22, 22), title, 11, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
+        self._text(p, QRectF(x, r.top() + 33, r.right() - x - 22, 18), subtitle, 9, QColor(160, 160, 160), Qt.AlignLeft)
+
+    @staticmethod
+    def _icon_font(px):
+        font = QFont()
+        font.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol"])
+        font.setPixelSize(px)
+        return font
+
     def _draw_hud(self, p, r):
         if self.hud[0] == "battery":
             self._draw_battery(p, r)
+            return
+        if self.hud[0] == "popup":
+            self._draw_popup(p, r)
             return
         kind, level, muted = self.hud
         # Segoe Fluent Icons: Brightness; Mute, Volume0..3. Caps Lock arrow comes from Segoe UI Symbol.
@@ -309,10 +382,7 @@ class Island(QWidget):
             glyph = ""
         else:
             glyph = "" if muted else ""[min(3, math.ceil(level * 3))]
-        icon_font = QFont()
-        icon_font.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol"])
-        icon_font.setPixelSize(16)
-        p.setFont(icon_font)
+        p.setFont(self._icon_font(16))
         p.setPen(QColor(255, 255, 255))
         p.drawText(QRectF(r.left() + 14, r.top(), 24, r.height()), Qt.AlignCenter, glyph)
         if kind == "language":
@@ -334,20 +404,6 @@ class Island(QWidget):
         p.drawRoundedRect(QRectF(track.left(), track.top(), track.width() * level, 4), 2, 2)
         self._text(p, QRectF(track.right() + 8, r.top(), 44, r.height()), f"{round(level * 100)}", 10,
                    QColor(140, 140, 140) if muted else QColor(255, 255, 255), Qt.AlignRight)
-
-    def _draw_icon(self, p, action, c):
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(255, 255, 255))
-        tri = lambda x, d: [QPointF(x, c.y() - 7), QPointF(x + d * 10, c.y()), QPointF(x, c.y() + 7)]
-        if action == "toggle" and self.info.get("playing"):
-            p.drawRect(QRectF(c.x() - 6, c.y() - 8, 4, 16))
-            p.drawRect(QRectF(c.x() + 2, c.y() - 8, 4, 16))
-        elif action == "toggle":
-            p.drawPolygon(tri(c.x() - 4, 1))
-        else:
-            d = 1 if action == "next" else -1
-            p.drawPolygon(tri(c.x() - d * 9, d))
-            p.drawPolygon(tri(c.x() - d * 1, d))
 
     def _text(self, p, rect, s, size, color, align, bold=False):
         font = QFont("Segoe UI Variable Text", size, QFont.DemiBold if bold else QFont.Normal)

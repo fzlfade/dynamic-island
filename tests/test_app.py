@@ -110,6 +110,49 @@ def test_battery_hud(island, monkeypatch, tmp_path):
     island.grab().save(str(tmp_path / "battery_charging.png"))
 
 
+def test_notify_queues_while_hidden(island):
+    island.setVisible(False)
+    island.notify(("popup", "x", "Due", "now"))
+    assert not island._hud_active()
+    island.setVisible(True)
+    island._drain()
+    assert island._hud_active() and island.hud[2] == "Due"
+    assert island._island_rect().height() == app.BATTERY_POPUP[1]
+
+
+def test_notify_drops_stale(island, monkeypatch, tmp_path):
+    now = [1000.0]
+    monkeypatch.setattr(app.time, "monotonic", lambda: now[0])
+    island.setVisible(False)
+    island.notify(("popup", "", "To-do", "Call mom"))
+    now[0] += 11 * 60
+    island.setVisible(True)
+    island._drain()
+    assert not island._hud_active() and not island.queue
+    island.notify(("popup", "", "To-do", "Call mom"))
+    island.grab().save(str(tmp_path / "popup.png"))
+
+
+def test_notify_serializes(island):
+    island.notify(("popup", "x", "First", ""))
+    island.notify(("popup", "x", "Second", ""))
+    assert island.hud[2] == "First"
+    island._drain()
+    assert island.hud[2] == "First", "waits while the first is showing"
+    island.hud_until = 0
+    island._drain()
+    assert island._hud_active() and island.hud[2] == "Second"
+
+
+def test_notify_waits_while_expanded(island):
+    island._set_expand(1.0)
+    island.notify(("popup", "x", "Due", "now"))
+    assert not island._hud_active(), "a HUD drawn under the open island would be lost"
+    island._set_expand(0.0)
+    island._drain()
+    assert island.hud[2] == "Due"
+
+
 def test_autostart_roundtrip():
     import winreg
     name = "DynamicIslandTest"

@@ -33,7 +33,8 @@ def save_lines(name, lines):
 
 
 def load_kv(name):
-    return dict(line.split("=", 1) for line in load_lines(name) if "=" in line)
+    pairs = (line.split("=", 1) for line in load_lines(name) if "=" in line)
+    return {k.strip(): v.strip() for k, v in pairs}
 
 
 def save_kv(name, values):

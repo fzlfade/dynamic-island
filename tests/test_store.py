@@ -27,6 +27,11 @@ def test_bad_values_fall_back(tmp_dir):
     assert f.read_bytes() == b"focus=abc\ngarbage\nshort_break=7\n"
 
 
+def test_kv_strips_spaces(tmp_dir):
+    (tmp_dir / "s.txt").write_text("focus = 30\n  name=  a b \n")
+    assert store.load_kv("s.txt") == {"focus": "30", "name": "a b"}
+
+
 def test_atomic_write_leaves_no_temp(tmp_dir):
     store.save_kv("s.txt", {"a": "1"})
     assert [p.name for p in tmp_dir.iterdir()] == ["s.txt"]
