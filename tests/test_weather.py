@@ -1,25 +1,12 @@
 import io
 import json
-import urllib.error
 from pathlib import Path
 
 import pytest
 
-from island import store, weather
+from island import http, store, weather
 
 MET = (Path(__file__).parent / "data" / "met.json").read_bytes()
-
-
-class Resp(io.BytesIO):
-    def __init__(self, body, headers=None):
-        super().__init__(body)
-        self.headers = headers or {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        pass
 
 
 def test_parse_met_fixture():
@@ -45,20 +32,20 @@ def test_url_rounds_to_4_decimals():
 def test_fetch_sets_now_sends_ua_and_honours_expires(monkeypatch):
     seen = []
 
-    def fake(req, timeout):
-        seen.append((req.full_url, req.get_header("User-agent"), timeout))
-        return Resp(MET, {"Expires": "Sat, 21 Nov 2026 12:00:00 GMT"})
-    monkeypatch.setattr(weather.urllib.request, "urlopen", fake)
+    def fake(url, headers=None, timeout=10):
+        seen.append((url, timeout))
+        return 200, {"expires": "Sat, 21 Nov 2036 12:00:00 GMT"}, MET
+    monkeypatch.setattr(http, "get", fake)
     w = weather.Weather(-6.2088, 106.8456)
     w.fetch_once()
     assert w.now == (27.3, "Partly cloudy")
-    assert seen[0][1:] == ("DynamicIsland/0.1", 10)
+    assert seen[0][1] == 10 and "lat=-6.2088&lon=106.8456" in seen[0][0]
     w.fetch_once()  # before Expires: no second request
     assert len(seen) == 1
 
 
 def test_minimum_30_minutes_between_fetches(monkeypatch):
-    monkeypatch.setattr(weather.urllib.request, "urlopen", lambda req, timeout: Resp(MET, {"Expires": "Mon, 01 Jan 2001 00:00:00 GMT"}))
+    monkeypatch.setattr(http, "get", lambda url, headers=None, timeout=10: (200, {"expires": "Mon, 01 Jan 2001 00:00:00 GMT"}, MET))
     clock = [2_000_000_000.0]
     monkeypatch.setattr(weather.time, "time", lambda: clock[0])
     w = weather.Weather(0, 0)
@@ -67,18 +54,18 @@ def test_minimum_30_minutes_between_fetches(monkeypatch):
 
 
 def test_weather_failure_keeps_last(monkeypatch, capsys):
-    monkeypatch.setattr(weather.urllib.request, "urlopen", lambda req, timeout: Resp(MET))
+    monkeypatch.setattr(http, "get", lambda url, headers=None, timeout=10: (200, {}, MET))
     w = weather.Weather(-6.2088, 106.8456)
     w.fetch_once()
     w.next_ok = 0
 
-    def boom(req, timeout):
-        raise urllib.error.URLError("down -6.2088")
-    monkeypatch.setattr(weather.urllib.request, "urlopen", boom)
+    def boom(url, headers=None, timeout=10):
+        raise OSError("down -6.2088")
+    monkeypatch.setattr(http, "get", boom)
     w.fetch_once()
     assert w.now == (27.3, "Partly cloudy")
     err = capsys.readouterr().err
-    assert "URLError" in err and "6.2088" not in err
+    assert "OSError" in err and "6.2088" not in err
 
 
 def test_location_geolocator_failure_is_jakarta(monkeypatch):

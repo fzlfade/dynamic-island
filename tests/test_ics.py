@@ -1,9 +1,8 @@
-import urllib.error
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from island import ics
+from island import http, ics
 
 JKT = ZoneInfo("Asia/Jakarta")
 TEXT = (Path(__file__).parent / "data" / "sample.ics").read_text(encoding="utf-8")
@@ -67,41 +66,27 @@ def test_rows_and_reminders():
     assert ics.due_reminders(series, datetime(2026, 11, 25, 0, 0, tzinfo=JKT), set()) == []  # all-day never reminds
 
 
-class Resp:
-    def __init__(self, data):
-        self.data = data
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        pass
-
-    def read(self):
-        return self.data
-
-
 def test_calendar_fetch_failure_keeps_events(monkeypatch):
     calls = []
 
-    def fake(req, timeout=None):
-        calls.append((req.full_url, timeout, req.get_header("User-agent")))
+    def fake(url, headers=None, timeout=10):
+        calls.append((url, timeout))
         if len(calls) > 1:
-            raise urllib.error.URLError("down")
-        return Resp(TEXT.encode())
+            raise OSError("down")
+        return 200, {}, TEXT.encode()
 
-    monkeypatch.setattr("urllib.request.urlopen", fake)
+    monkeypatch.setattr(http, "get", fake)
     c = ics.Calendar("webcal://example.com/x.ics")
     c.fetch_once()
     first = c.series
     assert len(first) == 9
     c.fetch_once()
     assert c.series is first
-    assert calls[0] == ("https://example.com/x.ics", 10, "DynamicIsland/0.1")
+    assert calls[0] == ("https://example.com/x.ics", 10)
 
 
 def test_calendar_without_url_does_nothing(monkeypatch):
-    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: 1 / 0)
+    monkeypatch.setattr(http, "get", lambda *a, **k: 1 / 0)
     c = ics.Calendar("")
     c.fetch_once()
     assert c.series == []

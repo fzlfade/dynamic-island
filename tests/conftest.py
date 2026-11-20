@@ -43,12 +43,12 @@ def _isolated_store(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_weather_io(monkeypatch):
-    from island import weather
+    from island import http, weather
 
     def no_geo():
         raise OSError("tests never use the real Geolocator")
     monkeypatch.setattr(weather, "_geolocate", no_geo)
 
-    def no_net(req, timeout):
+    def no_net(*a, **k):
         raise OSError("tests never touch the network")
-    monkeypatch.setattr(weather.urllib.request, "urlopen", no_net)
+    monkeypatch.setattr(http, "get", no_net)

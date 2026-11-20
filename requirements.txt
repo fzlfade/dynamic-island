@@ -8,3 +8,5 @@ typing_extensions
 winrt-Windows.Networking.Connectivity==4!10.0.28000.2957
 tzdata
 winrt-Windows.Devices.Geolocation==4!10.0.28000.2957
+winrt-Windows.Web.Http==4!10.0.28000.2957
+winrt-Windows.Web.Http.Headers==4!10.0.28000.2957

@@ -1,11 +1,11 @@
 """Calendar from an iCal link: pure parsing + recurrence (no Qt) and a background fetcher."""
-import http.client
 import sys
 import threading
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+from island import http
 
 _warned = []  # one stderr warning per run
 CAP = 5000  # hard limit on recurrence steps per series
@@ -243,10 +243,11 @@ class Calendar:
         if not self.url:
             return
         try:
-            req = urllib.request.Request(self.url, headers={"User-Agent": "DynamicIsland/0.1"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                self.series = parse_ics(r.read().decode("utf-8"))  # one atomic assignment; the Qt side only reads it
-        except (OSError, ValueError, http.client.HTTPException) as e:
+            status, _, body = http.get(self.url, timeout=10)
+            if status != 200:
+                raise OSError(f"HTTP {status}")
+            self.series = parse_ics(body.decode("utf-8"))  # one atomic assignment; the Qt side only reads it
+        except (OSError, ValueError) as e:
             print(f"calendar fetch failed: {type(e).__name__}", file=sys.stderr)  # never the URL: it is a secret
 
     def refresh(self):

@@ -1,14 +1,12 @@
 """Weather from MET Norway. Location stays on the device; only 4-decimal lat/lon go to api.met.no."""
 import asyncio
 import email.utils
-import http.client
 import json
 import sys
 import threading
 import time
-import urllib.request
 
-from island import store
+from island import http, store
 
 JAKARTA = (-6.2088, 106.8456, "Jakarta")
 MIN_GAP = 1800  # MET asks clients not to poll faster
@@ -64,17 +62,18 @@ class Weather:
         if time.time() < self.next_ok:
             return
         try:
-            req = urllib.request.Request(self.url, headers={"User-Agent": "DynamicIsland/0.1"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                now = parse_met(json.loads(r.read().decode("utf-8")))
-                expires = r.headers.get("Expires")
+            status, headers, body = http.get(self.url, timeout=10)
+            if status != 200:
+                raise OSError(f"HTTP {status}")
+            now = parse_met(json.loads(body.decode("utf-8")))
+            expires = headers.get("expires")
             try:
                 exp = email.utils.parsedate_to_datetime(expires).timestamp()
             except (TypeError, ValueError):
                 exp = 0
             self.next_ok = max(time.time() + MIN_GAP, exp)
             self.now = now
-        except (OSError, ValueError, KeyError, IndexError, TypeError, http.client.HTTPException) as e:
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
             print(f"weather fetch failed: {type(e).__name__}", file=sys.stderr)  # never the coordinates
 
     def refresh(self):
