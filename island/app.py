@@ -30,7 +30,8 @@ from datetime import datetime, timedelta
 from ctypes import wintypes
 
 from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from island import ask, ics, network, notifications, ocr, prayer, shelf, store, system, theme, weather
@@ -79,6 +80,7 @@ def autostart_enabled(key_name="DynamicIsland"):
 
 
 MARQUEE_PAUSE, MARQUEE_SPEED, MARQUEE_GAP = 1.5, 30.0, 40.0  # s held at the start, px/s, px between loops
+MARQUEE_FADE = 14.0  # px of soft edge on scrolling text
 
 
 def marquee_offset(text_w, box_w, elapsed):
@@ -749,11 +751,27 @@ class Island(QWidget):
             self.marquee_t0 = {s: t0}
         w = QFontMetrics(font).horizontalAdvance(s)
         x = marquee_offset(w, rect.width(), time.monotonic() - t0)
-        p.save()
-        p.setClipRect(rect, Qt.IntersectClip)  # intersect: keep the page-slide clip to the notch
+        # draw the line off-screen, then fade its edges with an alpha gradient (soft edges, like Apple's marquee)
+        dpr = p.device().devicePixelRatioF() if p.device() else 1.0
+        layer = QImage(max(1, int(rect.width() * dpr)), max(1, int(rect.height() * dpr)), QImage.Format_ARGB32_Premultiplied)
+        layer.setDevicePixelRatio(dpr)
+        layer.fill(0)
+        lp = QPainter(layer)
+        lp.setRenderHint(QPainter.Antialiasing)
+        lp.setFont(font)
+        lp.setPen(color)
         for dx in (x, x + w + MARQUEE_GAP):  # a second copy follows so the loop is seamless
-            p.drawText(QRectF(rect.left() + dx, rect.top(), w + 1, rect.height()), Qt.AlignLeft | Qt.AlignVCenter, s)
-        p.restore()
+            lp.drawText(QRectF(dx, 0, w + 1, rect.height()), Qt.AlignLeft | Qt.AlignVCenter, s)
+        fade = min(MARQUEE_FADE, rect.width() / 4) / rect.width()
+        mask = QLinearGradient(0, 0, rect.width(), 0)
+        mask.setColorAt(0, QColor(0, 0, 0, 0 if x < 0 else 255))  # no left fade while the line waits at its start
+        mask.setColorAt(fade, QColor(0, 0, 0, 255))
+        mask.setColorAt(1 - fade, QColor(0, 0, 0, 255))
+        mask.setColorAt(1, QColor(0, 0, 0, 0))
+        lp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        lp.fillRect(QRectF(0, 0, rect.width(), rect.height()), mask)
+        lp.end()
+        p.drawImage(rect.topLeft(), layer)  # honours the painter's opacity and the page-slide clip
 
 
 ABOUT = ("Lyrics from LRCLIB (lrclib.net).\n"

@@ -1,5 +1,5 @@
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent, QWheelEvent
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QMouseEvent, QWheelEvent
 
 from island import app, ask, focus, pages, shelf
 
@@ -176,3 +176,28 @@ def test_long_title_scrolls_while_playing(island, monkeypatch):
     monkeypatch.setattr(app.Island, "_draw_scrolling", lambda self, p, rect, s, *a: drawn.append(s) or real(self, p, rect, s, *a))
     island.grab()
     assert long in drawn, "the full title is drawn and scrolled, not cut with an ellipsis"
+
+
+def _scrolled_strip(island, monkeypatch, elapsed):
+    from PySide6.QtGui import QFont, QImage, QPainter
+    s = "█" * 80  # solid blocks: every pixel of the line is covered, so alpha shows the fade
+    island.marquee_t0 = {s: 1000.0}
+    monkeypatch.setattr(app.time, "monotonic", lambda: 1000.0 + elapsed)
+    img = QImage(300, 30, QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p = QPainter(img)
+    island._draw_scrolling(p, QRectF(0, 0, 300, 30), s, app.theme.font(12), QColor(255, 255, 255), Qt.AlignLeft)
+    p.end()
+    return lambda x: img.pixelColor(x, 15).alpha()
+
+
+def test_scrolling_text_fades_out_at_the_edges(island, monkeypatch):
+    alpha = _scrolled_strip(island, monkeypatch, app.MARQUEE_PAUSE + 2.0)  # mid-scroll
+    assert alpha(150) == 255, "solid in the middle"
+    assert alpha(298) < 60 and alpha(1) < 60, "both edges fade while text moves past them"
+
+
+def test_text_waiting_at_its_start_has_a_crisp_first_letter(island, monkeypatch):
+    alpha = _scrolled_strip(island, monkeypatch, 0.2)  # still holding at the start
+    assert alpha(1) == 255, "no left fade before anything has scrolled out"
+    assert alpha(298) < 60, "the right edge still hints there is more"
