@@ -12,12 +12,16 @@ def minute(now):
 
 class Water:
     def __init__(self, values):
-        for k, default in DEFAULTS.items():
-            v = store.get_int(values, k, default)
-            setattr(self, k, v if v > 0 or k == "start" and v == 0 else default)
+        self.set_config(values)
         self.day = values.get("day", "")
         self.taken = max(0, store.get_int(values, "taken", 0))
         self.last = store.get_int(values, "last", 0)
+
+    def set_config(self, values):
+        """Goal, glass, bottle, reminder window and interval; today's progress is left alone."""
+        for k, default in DEFAULTS.items():
+            v = store.get_int(values, k, default)
+            setattr(self, k, v if v > 0 or k == "start" and v == 0 else default)
 
     def roll(self, now):
         today = now.strftime("%Y%m%d")

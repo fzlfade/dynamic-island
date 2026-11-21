@@ -1,0 +1,103 @@
+"""The settings window: shows what's saved, saves what you change, and the island picks it up without a restart."""
+from PySide6.QtCore import QTime
+
+from island import app, settings, store
+
+
+def _window(island):
+    w = settings.SettingsWindow(island)
+    return w, w.widgets
+
+
+def test_shows_defaults_when_nothing_is_saved(island):
+    _, f = _window(island)
+    assert f["focus"].value() == 25 and f["short_break"].value() == 5 and f["long_break"].value() == 15
+    assert f["goal"].value() == 1500 and f["every"].value() == 60
+    assert f["start"].time() == QTime(8, 0) and f["end"].time() == QTime(0, 0), "00:00 means midnight"
+    assert f["notif_pill"].isChecked() and not f["prayer"].isChecked()
+    assert f["prayer_method"].currentText() == "Kemenag RI"
+    assert f["auto_location"].isChecked() and f["calendar_url"].text() == ""
+
+
+def test_shows_what_is_saved(island):
+    store.save_kv("settings.txt", {"focus": "30", "prayer": "1", "prayer_method": "JAKIM", "notif_pill": "0",
+                                   "calendar_url": "https://x.test/basic.ics", "lat": "1.35", "lon": "103.82",
+                                   "place": "Singapore"})
+    store.save_kv("water.txt", {"goal": "2000", "every": "45", "start": "420", "taken": "750"})
+    _, f = _window(island)
+    assert f["focus"].value() == 30 and f["prayer"].isChecked() and f["prayer_method"].currentText() == "JAKIM"
+    assert not f["notif_pill"].isChecked() and f["calendar_url"].text() == "https://x.test/basic.ics"
+    assert f["goal"].value() == 2000 and f["every"].value() == 45 and f["start"].time() == QTime(7, 0)
+    assert not f["auto_location"].isChecked() and f["place"].text() == "Singapore" and f["lat"].value() == 1.35
+
+
+def test_save_writes_files_and_keeps_other_data(island):
+    store.save_kv("settings.txt", {"lat": "1.35", "lon": "103.82", "place": "Singapore", "custom": "keep me"})
+    store.save_kv("water.txt", {"day": "20261121", "taken": "750", "last": "600"})
+    w, f = _window(island)
+    f["focus"].setValue(40)
+    f["goal"].setValue(2500)
+    f["end"].setTime(QTime(0, 0))
+    w.save()
+    s, wt = store.load_kv("settings.txt"), store.load_kv("water.txt")
+    assert s["focus"] == "40" and s["custom"] == "keep me" and s["place"] == "Singapore"
+    assert wt["goal"] == "2500" and wt["end"] == "1440", "midnight is the end of the day"
+    assert (wt["day"], wt["taken"], wt["last"]) == ("20261121", "750", "600"), "today's progress survives"
+
+
+def test_auto_location_clears_saved_coordinates(island):
+    store.save_kv("settings.txt", {"lat": "1.35", "lon": "103.82", "place": "Singapore"})
+    w, f = _window(island)
+    f["auto_location"].setChecked(True)
+    w.save()
+    assert not {"lat", "lon", "place"} & set(store.load_kv("settings.txt")), "next start detects again"
+
+
+def test_saving_applies_without_restart(island, monkeypatch):
+    refreshed = []
+    monkeypatch.setattr(app.ics.Calendar, "refresh", lambda self: refreshed.append(self.url))
+    island.water.taken = 500
+    w, f = _window(island)
+    f["notif_pill"].setChecked(False)
+    f["prayer"].setChecked(True)
+    f["prayer_method"].setCurrentText("MUIS")
+    f["goal"].setValue(3000)
+    f["calendar_url"].setText("https://x.test/new.ics")
+    w.save()
+    assert island.notif_pill is False
+    assert island.prayer.enabled and island.prayer.method == "MUIS"
+    assert island.water.goal == 3000 and island.water.taken == 500, "today's progress is kept"
+    assert island.calendar.url == "https://x.test/new.ics" and refreshed == ["https://x.test/new.ics"]
+
+
+def test_prayer_keeps_its_location_across_a_save(island):
+    island.prayer.set_location(-6.2, 106.8)
+    w, _ = _window(island)
+    w.save()
+    assert island.prayer.loc == (-6.2, 106.8)
+
+
+def test_start_with_windows_box_uses_the_registry_helper(island, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app, "autostart_enabled", lambda *a: False)
+    monkeypatch.setattr(app, "set_autostart", lambda on, *a: calls.append(on))
+    w, f = _window(island)
+    f["autostart"].setChecked(True)
+    w.save()
+    assert calls == [True]
+
+
+def test_tray_and_island_open_settings(island, monkeypatch):
+    opened = []
+    monkeypatch.setattr(island, "open_settings", lambda: opened.append(1))
+    tray = app.make_tray(island)
+    try:
+        {a.text(): a for a in tray.contextMenu().actions()}["Settings…"].trigger()
+    finally:
+        tray.hide()
+    island._set_expand(1.0)
+    island.grab()
+    from PySide6.QtCore import Qt
+    from tests.test_pages import _click_at
+    _click_at(island, island.page_hits["settings"].center())
+    assert opened == [1, 1]

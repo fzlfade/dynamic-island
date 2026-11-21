@@ -30,11 +30,11 @@ from datetime import datetime, timedelta
 from ctypes import wintypes
 
 from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import (QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter,
+from PySide6.QtGui import (QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter,
                            QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ask, ics, network, notifications, ocr, prayer, shelf, store, system, theme, weather
+from island import ask, ics, network, notifications, ocr, prayer, settings, shelf, store, system, theme, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -92,6 +92,10 @@ def marquee_offset(text_w, box_w, elapsed):
     return 0 if t < MARQUEE_PAUSE else -(t - MARQUEE_PAUSE) * MARQUEE_SPEED
 
 
+def _location_settings(values):
+    return tuple(values.get(k) for k in ("lat", "lon", "place"))
+
+
 def lerp(a, b, t):
     return a + (b - a) * t
 
@@ -146,6 +150,8 @@ class Island(QWidget):
         self.today.add_section(self._weather_rows)  # first, so the row cap never trims it
         self.prayer = prayer.Prayer(store.load_kv("settings.txt"))
         self.prayer_prev = prayer.minute_of(datetime.now())
+        self._loc_settings = _location_settings(store.load_kv("settings.txt"))
+        self.settings_window = None
         self._weather_thread = threading.Thread(target=self._start_weather, daemon=True)
         self._weather_thread.start()
         QTimer(self, interval=1_800_000, timeout=lambda: self.weather and self.weather.refresh()).start()
@@ -160,7 +166,7 @@ class Island(QWidget):
         self.reminded = set()
         self.today.add_section(self._calendar_rows)  # after Water, so the row cap trims events first
         self.calendar.refresh()
-        QTimer(self, interval=900_000, timeout=self.calendar.refresh).start()
+        QTimer(self, interval=900_000, timeout=lambda: self.calendar.refresh()).start()  # settings may swap it
         QTimer(self, interval=60_000, timeout=self._calendar_check).start()
         self.todo_page = TodayPage("To-do")
         self.todo_page.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()), pin_last=True)
@@ -328,6 +334,32 @@ class Island(QWidget):
         store.save_kv("water.txt", self.water.to_kv())
         if popup:
             self.notify(("popup", "", *popup))
+        self.update()
+
+    def open_settings(self):
+        if self.settings_window is None or not self.settings_window.isVisible():
+            self.settings_window = settings.SettingsWindow(self)
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def apply_settings(self):
+        """Pick up what the settings window saved, without a restart."""
+        v = store.load_kv("settings.txt")
+        self.notif_pill = store.get_int(v, "notif_pill", 1) == 1
+        loc = self.prayer.loc
+        self.prayer = prayer.Prayer(v)
+        if loc:
+            self.prayer.set_location(*loc)
+        calendar = ics.Calendar(v.get("calendar_url", ""))
+        if calendar.url != self.calendar.url:
+            self.calendar = calendar
+            self.calendar.refresh()
+        self.water.set_config(store.load_kv("water.txt"))  # keeps the glasses already logged today
+        if _location_settings(v) != self._loc_settings:  # new place, or back to automatic: look it up again
+            self._loc_settings = _location_settings(v)
+            self._weather_thread = threading.Thread(target=self._start_weather, daemon=True)
+            self._weather_thread.start()
         self.update()
 
     def _calendar_rows(self):  # every paint: only reads lists the calendar worker built
@@ -551,6 +583,9 @@ class Island(QWidget):
             return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
             hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
+            if hit == "settings" and e.button() == Qt.LeftButton:
+                self.open_settings()
+                return
             if hit is not None and e.button() == Qt.LeftButton:
                 step = {"prev": -1, "next": 1}.get(hit)
                 target = (self.page + step) % len(self.pages) if step else hit
@@ -642,6 +677,10 @@ class Island(QWidget):
         for key, x, glyph in (("prev", 2 * r.center().x() - edge - 14, "‹"), ("next", edge, "›")):
             self.page_hits[key] = QRectF(x, cy - 9, 14, 18)
             self._text(p, self.page_hits[key], glyph, 12, QColor(170, 170, 175), Qt.AlignCenter)
+        self.page_hits["settings"] = gear = QRectF(r.right() - 40, cy - 10, 20, 20)
+        p.setFont(self._icon_font(13))
+        p.setPen(QColor(150, 150, 156))
+        p.drawText(gear, Qt.AlignCenter, "")  # Settings gear
 
     def _draw_art(self, p, rect, radius):
         clip = QPainterPath()
@@ -790,18 +829,10 @@ def make_tray(parent):
     tray = QSystemTrayIcon(QIcon(pm), parent)
     menu = QMenu()
 
-    def open_settings():
-        if not (store.data_dir() / "settings.txt").exists():
-            store.save_lines("settings.txt", [])
-        os.startfile(store.data_dir() / "settings.txt")
-
     menu.addAction("Ask Claude…", lambda: parent.start_ask())  # also reachable when another app owns the hotkey
     menu.addAction("Copy text from screen", lambda: parent.start_ocr())
     menu.addSeparator()
-    menu.addAction("Open settings file", open_settings)
-    start = QAction("Start with Windows", menu, checkable=True, checked=autostart_enabled())
-    start.toggled.connect(set_autostart)
-    menu.addAction(start)
+    menu.addAction("Settings…", lambda: parent.open_settings())
     menu.addAction("About", lambda: QMessageBox.information(None, "About Dynamic Island", ABOUT))
     menu.addAction("Quit", QApplication.quit)
     tray.setContextMenu(menu)
