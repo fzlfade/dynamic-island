@@ -152,3 +152,27 @@ def test_going_back_slides_the_other_way(island):
     island._set_slide(0.5)
     island.grab()
     assert b.drawn[-1] > 0 > a.drawn[-1], "old page leaves right, new page comes in from the left"
+
+
+def test_marquee_offset():
+    # fits: never moves
+    assert app.marquee_offset(text_w=100, box_w=200, elapsed=9.0) == 0
+    # too wide: holds at the start first, then slides left, then loops back to the start
+    assert app.marquee_offset(300, 200, 0.5) == 0
+    assert app.marquee_offset(300, 200, app.MARQUEE_PAUSE + 1.0) == -app.MARQUEE_SPEED
+    cycle = app.MARQUEE_PAUSE + (300 + app.MARQUEE_GAP) / app.MARQUEE_SPEED
+    assert app.marquee_offset(300, 200, cycle + 0.1) == 0, "loops with another pause"
+
+
+def test_long_title_scrolls_while_playing(island, monkeypatch):
+    long = "another night awake with you on my mind. (feat. Adeliesa)"
+    island._on_media({"title": long, "artist": "eleventwelfth", "playing": True, "pos": 0, "pos_at": 0, "lyrics": []})
+    island._set_expand(1.0)
+    island.grab()
+    t0 = island.marquee_t0[long]
+    monkeypatch.setattr(app.time, "monotonic", lambda: t0 + app.MARQUEE_PAUSE + 2.0)
+    drawn = []
+    real = app.Island._draw_scrolling
+    monkeypatch.setattr(app.Island, "_draw_scrolling", lambda self, p, rect, s, *a: drawn.append(s) or real(self, p, rect, s, *a))
+    island.grab()
+    assert long in drawn, "the full title is drawn and scrolled, not cut with an ellipsis"

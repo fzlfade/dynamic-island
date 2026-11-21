@@ -53,15 +53,17 @@ class Media(QObject):
     """Polls the current media session on its own asyncio thread."""
     changed = Signal(dict)
 
-    def __init__(self):
+    def __init__(self, autostart=True):
         super().__init__()
         self.loop = asyncio.new_event_loop()
         self.session = None
         self._last_title = None
+        self._art_for = None  # title whose cover was already sent
         self.lyrics = []
         self._lyrics_task = None  # strong ref: the loop only holds tasks weakly
-        threading.Thread(target=self.loop.run_forever, daemon=True).start()
-        asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
+        if autostart:  # tests drive _read() themselves
+            threading.Thread(target=self.loop.run_forever, daemon=True).start()
+            asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
 
     async def _poll(self):
         manager = await SessionManager.request_async()
@@ -87,14 +89,24 @@ class Media(QObject):
         pos = tl.position.total_seconds()
         if playing:
             pos += (datetime.now(timezone.utc) - tl.last_updated_time).total_seconds()
-        info = {"title": props.title or "", "artist": props.artist or "", "playing": playing,
+        artist = (props.artist or "").split(" — ")[0]  # Apple Music sends "Artist — Album" as the artist
+        info = {"title": props.title or "", "artist": artist, "playing": playing,
                 "pos": max(0.0, min(pos, duration)), "pos_at": time.monotonic()}
-        if props.title != self._last_title:  # thumbnail and lyrics only when the track changes
-            self._last_title = props.title
+        new_track = props.title != self._last_title
+        if new_track:  # lyrics only when the track changes
+            self._last_title, self._art_for = props.title, None
             self.lyrics = []
-            info["thumb"] = await self._thumb(props.thumbnail)
+            info["thumb"] = b""  # clear the previous song's cover until this one's arrives
             if duration > 0:  # no timeline (some players) means nothing to sync against
-                self._lyrics_task = asyncio.create_task(self._load_lyrics(props.title, props.artist, duration))
+                self._lyrics_task = asyncio.create_task(self._load_lyrics(props.title, artist, duration))
+        if self._art_for != props.title:  # players often publish the cover after the title: keep asking
+            try:
+                art = await self._thumb(props.thumbnail)
+            except Exception as e:  # e.g. the image stream isn't ready yet: try again next poll
+                print("media cover:", type(e).__name__, file=sys.stderr)
+                art = b""
+            if art:
+                info["thumb"], self._art_for = art, props.title
         info["lyrics"] = self.lyrics
         self.changed.emit(info)
 

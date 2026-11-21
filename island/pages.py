@@ -30,13 +30,17 @@ class MediaPage(Page):
         if not island.info:
             island._text(p, QRectF(r), "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
             return
+        playing = bool(island.info.get("playing"))  # long lines scroll only while repaints are running
         art = QRectF(r.left() + 18, r.top() + 16, 64, 64)
         island._draw_art(p, art, 14)
         x = art.right() + 14
         text_w = r.right() - x - 18
-        island._text(p, QRectF(x, art.top() + 2, text_w, 22), island.info["title"], 12, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
-        island._text(p, QRectF(x, art.top() + 24, text_w, 20), island.info["artist"], 10, QColor(160, 160, 160), Qt.AlignLeft)
-        island._text(p, QRectF(x, art.top() + 44, text_w - 44, 20), island._lyric(), 10, QColor(120, 220, 140), Qt.AlignLeft)
+        island._text(p, QRectF(x, art.top() + 2, text_w, 22), island.info["title"], 12, QColor(255, 255, 255), Qt.AlignLeft, bold=True,
+                     scroll=playing)
+        island._text(p, QRectF(x, art.top() + 24, text_w, 20), island.info["artist"], 10, QColor(160, 160, 160), Qt.AlignLeft,
+                     scroll=playing)
+        island._text(p, QRectF(x, art.top() + 44, text_w - 44, 20), island._lyric(), 10, QColor(120, 220, 140), Qt.AlignLeft,
+                     scroll=playing)
         island._draw_bars(p, QPointF(r.right() - 34, art.top() + 52))
         cy, cx = r.bottom() - 34, r.center().x()  # leaves room for the page dots below
         for action, dx in (("prev", -56), ("toggle", 0), ("next", 56)):

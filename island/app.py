@@ -78,6 +78,18 @@ def autostart_enabled(key_name="DynamicIsland"):
         return False
 
 
+MARQUEE_PAUSE, MARQUEE_SPEED, MARQUEE_GAP = 1.5, 30.0, 40.0  # s held at the start, px/s, px between loops
+
+
+def marquee_offset(text_w, box_w, elapsed):
+    """x offset for text wider than its box: hold at the start, slide left, then loop."""
+    if text_w <= box_w:
+        return 0
+    cycle = MARQUEE_PAUSE + (text_w + MARQUEE_GAP) / MARQUEE_SPEED
+    t = elapsed % cycle
+    return 0 if t < MARQUEE_PAUSE else -(t - MARQUEE_PAUSE) * MARQUEE_SPEED
+
+
 def lerp(a, b, t):
     return a + (b - a) * t
 
@@ -99,6 +111,7 @@ class Island(QWidget):
         self.hovered = False
         self.buttons = {}
         self.page_hits = {}  # page dots and ‹ › arrows, rebuilt each paint
+        self.marquee_t0 = {}  # text -> when it started scrolling
         self.hud = ("volume", 0.0, False)  # (kind, level 0..1, muted)
         self.brightness = None  # last reported %, None until Windows sends the initial value
         self.layout = None  # (foreground window, LANGID) last seen
@@ -608,7 +621,8 @@ class Island(QWidget):
         self._draw_art(p, QRectF(r.left() + 10, r.top() + 6, 22, 22), 6)
         self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
         lyric_box = QRectF(r.left() + 42, r.top(), r.width() - 88, r.height())
-        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter)
+        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter,
+                   scroll=bool(self.info.get("playing")))
 
     def _draw_dots(self, p, r):
         """Page dots (click to jump) flanked by ‹ › arrows (click to step); hit areas land in page_hits."""
@@ -719,11 +733,27 @@ class Island(QWidget):
         self._text(p, QRectF(track.right() + 8, r.top(), 44, r.height()), f"{round(level * 100)}", 10,
                    QColor(140, 140, 140) if muted else QColor(255, 255, 255), Qt.AlignRight)
 
-    def _text(self, p, rect, s, size, color, align, bold=False):
+    def _text(self, p, rect, s, size, color, align, bold=False, scroll=False):
+        """One line of text; too long for `rect`: scrolls if `scroll` (repaints are running), else ends in "…"."""
         font = theme.font(size, QFont.DemiBold if bold else QFont.Normal)
         p.setFont(font)
         p.setPen(color)
+        if scroll and QFontMetrics(font).horizontalAdvance(s) > rect.width():
+            self._draw_scrolling(p, rect, s, font, color, align)
+            return
         p.drawText(rect, align | Qt.AlignVCenter, QFontMetrics(font).elidedText(s, Qt.ElideRight, int(rect.width())))
+
+    def _draw_scrolling(self, p, rect, s, font, color, align):
+        t0 = self.marquee_t0.setdefault(s, time.monotonic())  # each line starts its own scroll from the start
+        if len(self.marquee_t0) > 32:
+            self.marquee_t0 = {s: t0}
+        w = QFontMetrics(font).horizontalAdvance(s)
+        x = marquee_offset(w, rect.width(), time.monotonic() - t0)
+        p.save()
+        p.setClipRect(rect, Qt.IntersectClip)  # intersect: keep the page-slide clip to the notch
+        for dx in (x, x + w + MARQUEE_GAP):  # a second copy follows so the loop is seamless
+            p.drawText(QRectF(rect.left() + dx, rect.top(), w + 1, rect.height()), Qt.AlignLeft | Qt.AlignVCenter, s)
+        p.restore()
 
 
 ABOUT = ("Lyrics from LRCLIB (lrclib.net).\n"
