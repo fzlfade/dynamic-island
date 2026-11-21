@@ -113,6 +113,10 @@ class Island(QWidget):
         self.page = 0
         self.wheel = 0  # accumulated angle delta, so touchpads switch once per notch
 
+        self.page_from, self.slide, self.slide_dir = None, 1.0, 1  # page-change slide: 0 → 1
+        self.page_anim = QVariantAnimation(self, duration=280, easingCurve=QEasingCurve.OutCubic,
+                                           startValue=0.0, endValue=1.0)
+        self.page_anim.valueChanged.connect(self._set_slide)
         self.anim = QVariantAnimation(self, duration=420, easingCurve=QEasingCurve.OutBack)
         self.anim.valueChanged.connect(self._set_expand)
         self.anim.finished.connect(self._drain)  # reminders held while the island was open
@@ -533,8 +537,8 @@ class Island(QWidget):
             hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
             if hit is not None and e.button() == Qt.LeftButton:
                 step = {"prev": -1, "next": 1}.get(hit)
-                self.page = (self.page + step) % len(self.pages) if step else hit
-                self.update()
+                target = (self.page + step) % len(self.pages) if step else hit
+                self._go_to_page(target, step or (1 if target > self.page else -1))
                 return
             self.pages[self.page].click(e.position(), e.button(), self)
             self._update_frame()
@@ -545,9 +549,35 @@ class Island(QWidget):
             return
         self.wheel += e.angleDelta().y()
         if abs(self.wheel) >= 120:
-            self.page = (self.page + (1 if self.wheel < 0 else -1)) % len(self.pages)
+            step = 1 if self.wheel < 0 else -1
+            self._go_to_page((self.page + step) % len(self.pages), step)
             self.wheel = 0
-            self.update()
+
+    def _go_to_page(self, n, direction):
+        """Switch to page n at once (clicks land on it) and slide it in from `direction` (+1 right, -1 left)."""
+        if n == self.page:
+            return
+        self.page_from, self.page, self.slide_dir = self.page, n, direction
+        self.page_anim.stop()
+        self.page_anim.start()
+
+    def _set_slide(self, v):
+        self.slide = v
+        self.update()
+
+    def _draw_pages(self, p, r, clip):
+        if self.page_from is None or self.slide >= 1.0:
+            self.pages[self.page].draw(p, r, self)
+            return
+        travel, alpha = r.width() * 0.5, p.opacity()
+        for page, dx, fade in ((self.page_from, -self.slide_dir * self.slide * travel, 1 - self.slide),
+                               (self.page, self.slide_dir * (1 - self.slide) * travel, self.slide)):
+            p.save()
+            p.setClipPath(clip)  # sliding content stays inside the notch
+            p.translate(dx, 0)
+            p.setOpacity(alpha * fade)
+            self.pages[page].draw(p, r, self)
+            p.restore()
 
     # --- drawing -------------------------------------------------------------
     def paintEvent(self, _):
@@ -565,7 +595,7 @@ class Island(QWidget):
             return
         if self.expand >= 0.5:
             p.setOpacity(min((self.expand - 0.5) * 2, 1.0))
-            self.pages[self.page].draw(p, r, self)
+            self._draw_pages(p, r, path)
             self._draw_dots(p, r)
         elif not self.info:
             self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)

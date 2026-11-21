@@ -115,3 +115,40 @@ def test_pin_last_keeps_last_row_and_index(island, qapp):
 
 def test_today_page_has_water_row_by_default(island):
     assert [island.today.sections[1][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "To-do"
+
+
+class Spy(pages.Page):
+    """Records the horizontal offset it was painted at."""
+
+    def __init__(self):
+        self.drawn = []
+
+    def draw(self, p, r, island):
+        self.drawn.append(round(p.transform().dx()))
+
+
+def test_page_change_slides_instead_of_jumping(island):
+    a, b = Spy(), Spy()
+    island.pages, island.page = [a, b], 0
+    island._set_expand(1.0)
+    island._go_to_page(1, +1)
+    assert island.page == 1, "the target page is current at once (clicks, tests)"
+    assert island.page_anim.state() == island.page_anim.State.Running
+    island._set_slide(0.5)
+    island.grab()
+    assert a.drawn[-1] < 0 < b.drawn[-1], "mid-slide: old page leaves left, new page comes in from the right"
+    island.page_anim.stop()
+    island._set_slide(1.0)
+    a.drawn.clear()
+    island.grab()
+    assert a.drawn == [] and b.drawn[-1] == 0, "settled: only the new page, in place"
+
+
+def test_going_back_slides_the_other_way(island):
+    a, b = Spy(), Spy()
+    island.pages, island.page = [a, b], 1
+    island._set_expand(1.0)
+    island._go_to_page(0, -1)
+    island._set_slide(0.5)
+    island.grab()
+    assert b.drawn[-1] > 0 > a.drawn[-1], "old page leaves right, new page comes in from the left"
