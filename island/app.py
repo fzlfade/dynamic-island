@@ -33,7 +33,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF
 from PySide6.QtGui import QAction, QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from island import ask, ics, network, notifications, ocr, prayer, shelf, store, system, weather
+from island import ask, ics, network, notifications, ocr, prayer, shelf, store, system, theme, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
 from island.pages import MediaPage, TodayPage
@@ -88,6 +88,7 @@ class Island(QWidget):
 
     def __init__(self, media):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        theme.load_fonts()
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
@@ -719,7 +720,7 @@ class Island(QWidget):
                    QColor(140, 140, 140) if muted else QColor(255, 255, 255), Qt.AlignRight)
 
     def _text(self, p, rect, s, size, color, align, bold=False):
-        font = QFont("Segoe UI Variable Text", size, QFont.DemiBold if bold else QFont.Normal)
+        font = theme.font(size, QFont.DemiBold if bold else QFont.Normal)
         p.setFont(font)
         p.setPen(color)
         p.drawText(rect, align | Qt.AlignVCenter, QFontMetrics(font).elidedText(s, Qt.ElideRight, int(rect.width())))

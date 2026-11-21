@@ -2,7 +2,9 @@
 import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics
+from PySide6.QtGui import QColor, QFontMetrics
+
+from island import theme
 
 
 class Page:
@@ -83,7 +85,7 @@ class TodayPage(Page):
 
     def draw(self, p, r, island):
         self.hits = []
-        fm = QFontMetrics(QFont("Segoe UI Variable Text", 10))  # same font island._text uses at size 10
+        fm = QFontMetrics(theme.font(10))  # same font island._text uses at size 10
         for rows, on_click, pin_last in self.sections:
             items = list(enumerate(rows()))
             room = self.MAX_ROWS - len(self.hits)

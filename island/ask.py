@@ -5,6 +5,7 @@ import threading
 from PySide6.QtCore import QObject, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics
 
+from island import theme
 from island.pages import Page
 
 HOTKEY_ID = 2
@@ -74,7 +75,7 @@ class Asker(QObject):
 
 class AskPage(Page):
     title = "Ask"
-    FONT = QFont("Segoe UI Variable Text", 10)
+    FONT = theme.font(10)
 
     def __init__(self):
         self.question, self.text, self.state = "", "", "idle"
