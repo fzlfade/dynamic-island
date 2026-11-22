@@ -116,44 +116,89 @@ class Page:
 
 class MediaPage(Page):
     title = "Music"
+    icon = "\uE8D6"  # page-icons bar
     status_icon = "wave"
     hide_title = True  # the cover art sits where other pages put their title
+    SLIDER_W = 68.0
 
     def __init__(self):
         self.lyrics_on = True  # the bubble button: lyric line in place of the artist
         self.muted = False
+        self.level = None  # volume 0..1, read when the slider is revealed (a COM call: not on every frame)
+
+    def _slider(self, r):
+        cy = r.top() + 157
+        return QRectF(r.left() + 322, cy - 10, self.SLIDER_W, 20)
 
     def draw(self, p, r, island):
         L, T = r.left(), r.top()
-        if not island.info:
-            island._text(p, QRectF(L, T + 44, r.width(), r.height() - 60), "Nothing playing", 11, GREY, Qt.AlignCenter)
-            return
-        info, playing = island.info, bool(island.info.get("playing"))
-        island._draw_art(p, QRectF(L + 37, T + 28, 71, 70), 12)
+        info = island.info or {}
+        playing = bool(info.get("playing"))
+        art = QRectF(L + 37, T + 28, 71, 70)
+        if info.get("title"):
+            island._draw_art(p, art, 12)
+            title = info["title"]
+        else:  # Nusa keeps the whole player with a placeholder tile
+            p.setPen(Qt.NoPen)
+            p.setBrush(CHIP)
+            p.drawRoundedRect(art, 12, 12)
+            glyph(p, island, art, "\uE8D6", 28, QColor(110, 110, 114))
+            title = "Not Playing"
+        n = info.get("sessions", 0)
+        if n > 1:  # one dot per media source; the current one is white
+            x0 = art.center().x() - (n - 1) * 3.5
+            for i in range(n):
+                c = QPointF(x0 + i * 7, T + 104)
+                island.buttons[f"src{i}"] = QRectF(c.x() - 4, c.y() - 5, 8, 10)
+                p.setPen(Qt.NoPen)
+                p.setBrush(WHITE if i == info.get("source", 0) else DIM)
+                p.drawEllipse(c, 1.8, 1.8)
         x, w = L + 126, r.right() - 37 - (L + 126)
-        island._text(p, QRectF(x, T + 49, w, 24), info["title"], 12, WHITE, Qt.AlignLeft, bold=True, scroll=playing)
+        island._text(p, QRectF(x, T + 49, w, 24), title, 12, WHITE, Qt.AlignLeft, bold=True, scroll=playing)
         lyric = island._lyric() if self.lyrics_on else ""
-        island._text(p, QRectF(x, T + 71, w, 18), lyric or info["artist"], 9, GREEN if lyric else GREY,
+        island._text(p, QRectF(x, T + 71, w, 18), lyric or info.get("artist", ""), 9, GREEN if lyric else GREY,
                      Qt.AlignLeft, scroll=playing)
         dur = info.get("duration") or 0.0
-        pos = min(island._pos(), dur) if dur else island._pos()
+        pos = min(island._pos(), dur) if dur and info else 0.0
         island._text(p, QRectF(L + 37, T + 112, 60, 22), mmss(pos), 13, WHITE, Qt.AlignLeft)
         bar(p, QRectF(L + 97, T + 120, 253, 4), pos / dur if dur else 0.0)
-        island._text(p, QRectF(L + 352, T + 112, 66, 22), "-" + mmss(dur - pos) if dur else "", 13, WHITE, Qt.AlignRight)
+        island._text(p, QRectF(L + 352, T + 112, 66, 22), "-" + mmss(dur - pos), 13, WHITE, Qt.AlignRight)
         cy = T + 157
         island.buttons["lyrics"] = QRectF(L + 58, cy - 14, 28, 28)
-        glyph(p, island, island.buttons["lyrics"], "", 17, WHITE if self.lyrics_on else GREY)
+        glyph(p, island, island.buttons["lyrics"], "\uE8BD", 17, WHITE if self.lyrics_on else GREY)
         for action, cx in (("prev", L + 173), ("toggle", L + 228), ("next", L + 281)):
             island.buttons[action] = QRectF(cx - 20, cy - 16, 40, 32)
             self._draw_icon(p, island, action, QPointF(cx, cy))
         island.buttons["volume"] = QRectF(L + 395, cy - 14, 28, 28)
-        glyph(p, island, island.buttons["volume"], "" if self.muted else "", 15)
+        glyph(p, island, island.buttons["volume"], "\uE74F" if self.muted else "\uE767", 15)
+        slider = self._slider(r)
+        hover = island.hover_pos
+        if hover is not None and slider.united(island.buttons["volume"]).adjusted(-4, -6, 4, 6).contains(hover):
+            if self.level is None:
+                self.level, self.muted = island.read_volume()
+            island.buttons["slider"] = slider
+            bar(p, QRectF(slider.left(), cy - 2.5, slider.width(), 5), self.level, WHITE)
+        else:
+            self.level = None  # read afresh next time it opens
+
+    def set_level(self, pos, island):
+        """Click or drag on the hover slider: set the system volume."""
+        slider = island.buttons.get("slider")
+        if slider is None:
+            return False
+        self.level = max(0.0, min(1.0, (pos.x() - slider.left()) / slider.width()))
+        island.write_volume(self.level)
+        return True
 
     def click(self, pos, button, island):
         for action, rect in island.buttons.items():
             if not rect.contains(pos):
                 continue
-            if action == "lyrics":
+            if action == "slider":
+                self.set_level(pos, island)
+            elif action.startswith("src"):
+                getattr(island.media, "select", lambda n: None)(int(action[3:]))
+            elif action == "lyrics":
                 self.lyrics_on = not self.lyrics_on
             elif action == "volume":
                 try:
@@ -163,7 +208,7 @@ class MediaPage(Page):
             else:
                 island.media.send(action)
                 if action == "toggle" and island.info:  # optimistic flip so the icon reacts before the next poll
-                    island._on_media({**island.info, "playing": not island.info["playing"],
+                    island._on_media({**island.info, "playing": not island.info.get("playing"),
                                       "pos": island._pos(), "pos_at": time.monotonic()})
             return True
         return False
@@ -175,8 +220,8 @@ class MediaPage(Page):
         if action == "toggle" and island.info.get("playing"):
             p.drawRoundedRect(QRectF(c.x() - 6.5, c.y() - 9, 4.5, 18), 1.2, 1.2)
             p.drawRoundedRect(QRectF(c.x() + 2, c.y() - 9, 4.5, 18), 1.2, 1.2)
-        elif action == "toggle":
-            p.drawPolygon(tri(c.x() - 5, 1))
+        elif action == "toggle":  # Nusa's play triangle is larger than the skip arrows
+            p.drawPolygon([QPointF(c.x() - 6, c.y() - 10), QPointF(c.x() + 9, c.y()), QPointF(c.x() - 6, c.y() + 10)])
         else:
             d = 1 if action == "next" else -1
             p.drawPolygon(tri(c.x() - d * 10, d))
@@ -184,6 +229,7 @@ class MediaPage(Page):
 
 
 class WaterPage(Page):
+    icon = "\uEB42"
     """Today's water: big litres, reminder switch, progress, Drink/Settings, and an hourly chart (09-21)."""
     title = "Water"
     status_icon = "bell"
@@ -255,6 +301,7 @@ class WaterPage(Page):
 
 
 class TodoPage(Page):
+    icon = "\uE9D5"
     """Done/total today, Add Task / Edit Task, and the task list (or an empty state) in a panel on the right."""
     title = "Todo"
     title_parts = [("Todo", WHITE), ("List", GREEN)]
@@ -328,6 +375,7 @@ class TodoPage(Page):
 
 
 class TodayPage(Page):
+    icon = "\uE787"
     """Rows from feature sections (weather, prayer, water, calendar), at most MAX_ROWS in total."""
     title = "Today"
     MAX_ROWS, TOP, ROW_H = 5, 52.0, 22.0

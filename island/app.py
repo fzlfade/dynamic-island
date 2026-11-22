@@ -52,8 +52,9 @@ HUD_SECONDS = 1.5
 BATTERY_POPUP = (340.0, 64.0)
 BATTERY_SECONDS = 3.0
 EXPANDED = (455.0, 197.0)  # measured on Nusa 1.3.1
-EAR, CORNER = 22.0, 36.0  # concave flare where the notch meets the bezel; bottom corner radius
-WIN_W, WIN_H = 520, 210  # window fits the largest island; transparent pixels are click-through
+EAR, CORNER = 22.0, 36.0
+BAR_EXTRA = 30.0  # the island grows this much while the page-icons bar shows  # concave flare where the notch meets the bezel; bottom corner radius
+WIN_W, WIN_H = 520, 240  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
 NOTIFY_SECONDS = 4.0
 DEFAULT_PAGES = "media,focus,water,shelf,todo"
 NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
@@ -162,6 +163,10 @@ class Island(QWidget):
         self.anim.valueChanged.connect(self._set_expand)
         self.anim.finished.connect(self._drain)  # reminders held while the island was open
         self.leave_delay = QTimer(self, singleShot=True, interval=90, timeout=lambda: self._animate_to(0.0))
+        self.hover_pos = None  # pointer position while over the open island (hover-revealed controls)
+        self.bar_v = 0.0  # 0..1 page-icons bar, shown while the pointer is on the page dots
+        self.bar_anim = QVariantAnimation(self, duration=180, easingCurve=QEasingCurve.OutCubic)
+        self.bar_anim.valueChanged.connect(self._set_bar)
         self.peek = 0.0  # 0..1 swell of the closed pill while the pointer rests on it
         self.peek_anim = QVariantAnimation(self, duration=120, easingCurve=QEasingCurve.OutCubic)
         self.peek_anim.valueChanged.connect(self._set_peek)
@@ -550,6 +555,32 @@ class Island(QWidget):
         self.expand = v
         self.update()
 
+    def _set_bar(self, v):
+        self.bar_v = v
+        self.update()
+
+    def _bar_to(self, target):
+        if self.bar_anim.endValue() == target and self.bar_anim.state() == self.bar_anim.State.Running:
+            return
+        if abs(self.bar_v - target) < 1e-3:
+            return
+        self.bar_anim.stop()
+        self.bar_anim.setStartValue(self.bar_v)
+        self.bar_anim.setEndValue(target)
+        self.bar_anim.start()
+
+    def read_volume(self):
+        try:
+            return self.volume.get()
+        except OSError:  # no audio device
+            return 0.0, False
+
+    def write_volume(self, level):
+        try:
+            self.volume.set(level, False)  # moving the slider unmutes, like Windows' own slider
+        except OSError:
+            pass
+
     def _set_peek(self, v):
         self.peek = v
         self.update()
@@ -598,6 +629,7 @@ class Island(QWidget):
             cw, ch = COLLAPSED_LYRICS if self.info.get("lyrics") else COLLAPSED_PLAYING
         cw, ch = cw + (PEEK[0] - MINIMAL[0]) * self.peek, ch + (PEEK[1] - MINIMAL[1]) * self.peek
         w, h = lerp(cw, EXPANDED[0], self.expand), max(0.0, lerp(ch, EXPANDED[1], self.expand))
+        h += BAR_EXTRA * self.bar_v * max(0.0, min(self.expand, 1.0))  # Nusa grows to fit the page-icons bar
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
     # --- input ---------------------------------------------------------------
@@ -647,6 +679,20 @@ class Island(QWidget):
         self.leave_delay.start()
 
     def mouseMoveEvent(self, e):
+        if self.expand >= 0.5:
+            self.hover_pos = e.position()
+            page = self.pages[self.page]
+            slider = self.buttons.get("slider")
+            if (e.buttons() & Qt.LeftButton and self.press_at is not None and slider is not None
+                    and slider.contains(self.press_at) and hasattr(page, "set_level")):
+                page.set_level(e.position(), self)  # dragging the volume slider
+                self.update()
+                return
+            r = self._island_rect()
+            on_dots = (e.position().y() >= r.bottom() - 24 - BAR_EXTRA * self.bar_v
+                       and abs(e.position().x() - r.center().x()) < 130)
+            self._bar_to(1.0 if on_dots and self.on("page_icons") else 0.0)
+            self.update()
         if (self.press_at is not None and e.buttons() & Qt.LeftButton and self.expand >= 0.5
                 and (e.position() - self.press_at).manhattanLength() >= QApplication.startDragDistance()):
             start, self.press_at = self.press_at, None
@@ -672,6 +718,8 @@ class Island(QWidget):
 
     def leaveEvent(self, e):
         self.hovered = False
+        self.hover_pos = None
+        self._bar_to(0.0)
         self._leave()
 
     def mouseReleaseEvent(self, e):
@@ -688,6 +736,9 @@ class Island(QWidget):
             return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
             hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
+            if hit == "gear" and e.button() == Qt.LeftButton:
+                self.open_settings()
+                return
             if hit is not None and e.button() == Qt.LeftButton:
                 step = {"prev": -1, "next": 1}.get(hit)
                 target = (self.page + step) % len(self.pages) if step else hit
@@ -776,20 +827,56 @@ class Island(QWidget):
             weight[self.page_from], weight[self.page] = 1 - self.slide, self.slide
         else:
             weight[self.page] = 1.0
+        if self.bar_v > 0.01:
+            self._draw_icons_bar(p, r)
+        p.save()
+        p.setOpacity(p.opacity() * (1 - self.bar_v))
         widths = [4 + 12 * w for w in weight]
-        gap, cy = 5.0, r.bottom() - 8
+        gap, cy = 5.0, r.bottom() - 8 - BAR_EXTRA * self.bar_v
         x = r.center().x() - (sum(widths) + gap * (n - 1)) / 2
         p.setPen(Qt.NoPen)
         for i, w in enumerate(widths):
             p.setBrush(QColor(255, 255, 255) if weight[i] > 0.5 else QColor(105, 105, 110))
             p.drawRoundedRect(QRectF(x, cy - 2, w, 4), 2, 2)
             hit_w = max(w + gap, 14.0)  # tiny dots, comfortable click target
-            self.page_hits[i] = QRectF(x + w / 2 - hit_w / 2, cy - 9, hit_w, 18)
+            if self.bar_v < 0.5:
+                self.page_hits[i] = QRectF(x + w / 2 - hit_w / 2, cy - 9, hit_w, 18)
             x += w + gap
+        p.restore()
         mid = r.top() + 107
         for key, cx, glyph in (("prev", r.left() + 11, "\u2039"), ("next", r.right() - 12, "\u203a")):
             self.page_hits[key] = QRectF(cx - 12, mid - 20, 24, 40)
             self._text(p, QRectF(cx - 7, mid - 11, 14, 22), glyph, 13, QColor(95, 95, 100), Qt.AlignCenter)
+
+    def _draw_icons_bar(self, p, r):
+        """Nusa's page icons: shown while the pointer is on the dots; click one to jump, the gear opens settings."""
+        n, cell, sep = len(self.pages), 28.0, 14.0
+        width = n * cell + sep + cell + 12
+        bar = QRectF(r.center().x() - width / 2, r.bottom() - 32, width, 26)
+        p.save()
+        p.setOpacity(p.opacity() * self.bar_v)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(28, 28, 30))
+        p.drawRoundedRect(bar, 13, 13)
+        x = bar.left() + 6
+        for i, page in enumerate(self.pages):
+            cellr = QRectF(x, bar.top(), cell, bar.height())
+            current = QColor(255, 55, 95) if i == self.page else QColor(210, 210, 214)
+            p.setFont(self._icon_font(14))
+            p.setPen(current)
+            p.drawText(cellr, Qt.AlignCenter, getattr(page, "icon", "\uE8FD"))
+            if self.bar_v >= 0.5:
+                self.page_hits[i] = cellr
+            x += cell
+        p.setPen(QPen(QColor(70, 70, 74), 1))
+        p.drawLine(QPointF(x + sep / 2, bar.top() + 6), QPointF(x + sep / 2, bar.bottom() - 6))
+        gear = QRectF(x + sep, bar.top(), cell, bar.height())
+        p.setFont(self._icon_font(14))
+        p.setPen(QColor(210, 210, 214))
+        p.drawText(gear, Qt.AlignCenter, "\uE713")
+        if self.bar_v >= 0.5:
+            self.page_hits["gear"] = gear
+        p.restore()
 
     def _draw_title(self, p, r, page):
         """Page title at the top left; pages that put something else there (Media's cover) set hide_title."""
@@ -821,7 +908,7 @@ class Island(QWidget):
                        Qt.AlignLeft, bold=True)
         icon = getattr(self.pages[self.page], "status_icon", None)
         at = QPointF(r.right() - 45, cy)
-        if icon == "wave":
+        if icon == "wave" and self.info.get("playing"):  # Nusa drops the waveform when nothing plays
             t = time.monotonic()
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255))

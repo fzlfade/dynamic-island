@@ -71,6 +71,7 @@ def save(items):
 
 
 class ShelfPage(Page):
+    icon = ""  # page-icons bar
     title = "Shelf"
     COLS, CHIP_W, CHIP_H, GAP = 3, 112.0, 40.0, 8.0
 

@@ -50,3 +50,97 @@ def test_water_switch_on_the_page_saves(island):
     was = island.water.on
     island.toggle_water()
     assert island.water.on is not was and store.load_kv("water.txt")["on"] == str(int(island.water.on))
+
+
+def _drawn_texts(island, monkeypatch):
+    seen = []
+    real = island._text
+    monkeypatch.setattr(island, "_text", lambda p, rect, s, *a, **k: seen.append(s) or real(p, rect, s, *a, **k))
+    return seen
+
+
+def test_not_playing_keeps_the_player(island, monkeypatch):
+    island._set_expand(1.0)
+    seen = _drawn_texts(island, monkeypatch)
+    island.grab()
+    assert "Not Playing" in seen and {"prev", "toggle", "next", "volume"} <= set(island.buttons)
+
+
+def test_source_dots_switch_media_source(island, fake_media, monkeypatch):
+    picked = []
+    fake_media.select = picked.append
+    fake_media.changed.emit({"title": "Song", "artist": "A", "playing": False, "sessions": 2, "source": 0})
+    island._set_expand(1.0)
+    island.grab()
+    assert {"src0", "src1"} <= set(island.buttons)
+    island.media_page.click(island.buttons["src1"].center(), Qt.LeftButton, island)
+    assert picked == [1]
+
+
+def test_media_select_follows_the_chosen_session(qapp):
+    import asyncio
+    from datetime import timedelta, timezone
+    from types import SimpleNamespace as NS
+    from island import media
+
+    def session(app_id, title):
+        async def props():
+            return NS(title=title, artist="", thumbnail=None)
+        zero = timedelta(0)
+        return NS(source_app_user_model_id=app_id, try_get_media_properties_async=props,
+                  get_playback_info=lambda: NS(playback_status=media.PLAYING),
+                  get_timeline_properties=lambda: NS(start_time=zero, end_time=zero, position=zero,
+                                                     last_updated_time=datetime.now(timezone.utc)))
+    a, b = session("music", "From music"), session("browser", "From browser")
+    manager = NS(get_current_session=lambda: a, get_sessions=lambda: [a, b])
+    m = media.Media(autostart=False)
+    got = []
+    m.changed.connect(got.append)
+    asyncio.run(m._read(manager))
+    assert got[-1]["title"] == "From music" and got[-1]["sessions"] == 2
+    m.select(1)
+    asyncio.run(m._read(manager))
+    assert got[-1]["title"] == "From browser" and got[-1]["source"] == 1
+
+
+def test_page_icons_bar_with_gear(island, monkeypatch):
+    opened = []
+    monkeypatch.setattr(island, "open_settings", lambda *a: opened.append(1))
+    island._set_expand(1.0)
+    base = island._island_rect().height()
+    island._set_bar(1.0)
+    assert island._island_rect().height() == base + app.BAR_EXTRA, "Nusa grows to fit the bar"
+    island.grab()
+    assert "gear" in island.page_hits and all(i in island.page_hits for i in range(len(island.pages)))
+    from tests.test_pages import _click_at
+    _click_at(island, island.page_hits[2].center())
+    assert island.page == 2, "an icon jumps to its page"
+    island.grab()
+    _click_at(island, island.page_hits["gear"].center())
+    assert opened == [1]
+
+
+def test_hovering_the_dots_reveals_the_bar(island):
+    island._set_expand(1.0)
+    r = island._island_rect()
+    island.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(r.center().x(), r.bottom() - 8), QPointF(0, 0),
+                                      Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+    assert island.bar_anim.endValue() == 1.0
+
+
+def test_volume_slider_appears_on_hover_and_sets_level(island, monkeypatch):
+    written = []
+    monkeypatch.setattr(island, "read_volume", lambda: (0.3, False))
+    monkeypatch.setattr(island, "write_volume", written.append)
+    island._set_expand(1.0)
+    island.grab()
+    island.hover_pos = island.buttons["volume"].center()
+    island.grab()
+    slider = island.buttons["slider"]
+    assert island.media_page.level == 0.3
+    island.media_page.click(QPointF(slider.left() + slider.width() / 2, slider.center().y()), Qt.LeftButton, island)
+    assert written and abs(written[-1] - 0.5) < 0.02
+
+
+def test_window_fits_the_island_with_the_icons_bar():
+    assert app.WIN_H >= app.EXPANDED[1] + app.BAR_EXTRA, "otherwise the bar is clipped"

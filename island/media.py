@@ -57,6 +57,8 @@ class Media(QObject):
         super().__init__()
         self.loop = asyncio.new_event_loop()
         self.session = None
+        self.pick = None  # app id of the source chosen with the dots under the cover; None: Windows' current one
+        self.ids = []
         self._last_title = None
         self._art_for = None  # title whose cover was already sent
         self.lyrics = []
@@ -76,7 +78,10 @@ class Media(QObject):
             await asyncio.sleep(1)
 
     async def _read(self, manager):
-        s = self.session = manager.get_current_session()
+        current = manager.get_current_session()
+        sessions = list(manager.get_sessions()) if hasattr(manager, "get_sessions") else ([current] if current else [])
+        self.ids = [getattr(x, "source_app_user_model_id", "") for x in sessions]
+        s = self.session = next((x for x, i in zip(sessions, self.ids) if i == self.pick), current)
         if not s:
             self._last_title = None
             self.changed.emit({})
@@ -92,6 +97,7 @@ class Media(QObject):
         shown = props.artist or ""  # Nusa shows Apple Music's "Artist — Album" line as it comes
         artist = shown.split(" — ")[0]  # the lyrics search needs the artist alone
         info = {"title": props.title or "", "artist": shown, "playing": playing, "duration": duration,
+                "sessions": len(sessions), "source": sessions.index(s) if s in sessions else 0,
                 "pos": max(0.0, min(pos, duration)), "pos_at": time.monotonic()}
         new_track = props.title != self._last_title
         if new_track:  # lyrics only when the track changes
@@ -128,6 +134,11 @@ class Media(QObject):
         reader = DataReader(stream.get_input_stream_at(0))
         n = await reader.load_async(stream.size)
         return bytes(reader.read_buffer(n))
+
+    def select(self, n):
+        """Follow media source n (the dots under the cover); takes effect on the next 1 s poll."""
+        if 0 <= n < len(self.ids):
+            self.pick = self.ids[n]
 
     def send(self, action):
         if self.session:

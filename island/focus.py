@@ -47,6 +47,7 @@ class Pomodoro:
 
 
 class FocusPage(Page):
+    icon = ""  # page-icons bar
     title = "Pomodoro"
     status_icon = "wave"
 

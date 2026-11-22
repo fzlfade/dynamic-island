@@ -74,6 +74,7 @@ class Asker(QObject):
 
 
 class AskPage(Page):
+    icon = ""  # page-icons bar
     title = "Ask"
     FONT = theme.font(10)
 

@@ -32,6 +32,8 @@ FIELDS = [
      "Games, videos and slides that fill the screen", None),
     ("Pages", "", S, "pages", "pages", DEFAULT_PAGES, "", "", None),
     ("Appearance", "Notch", S, "open_click", "segment", 0, "Open the notch", "", ["Hover", "Click"]),
+    ("Appearance", "Notch", S, "page_icons", "switch", 1, "Page icons",
+     "Show page icons when you hover the page dots", None),
     ("Appearance", "Motion", S, "fast_animation", "segment", 0, "Animation speed", "", ["Normal", "Fast"]),
     ("Music and lyrics", "Lyrics", S, "lyrics", "switch", 1, "Show lyrics",
      "From LRCLIB, a community-contributed lyrics database", None),
