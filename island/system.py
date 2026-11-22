@@ -234,3 +234,35 @@ def fullscreen_app_running():
 def notifications_quiet():
     """True unless Windows is accepting notifications (QUNS 5): quiet hours, presenting, locked..."""
     return _notification_state() != 5
+
+
+# --- glass: real blur behind the island -------------------------------------------------------------------------
+class _AccentPolicy(ctypes.Structure):
+    _fields_ = [("state", ctypes.c_int), ("flags", ctypes.c_int), ("color", ctypes.c_uint), ("animation", ctypes.c_int)]
+
+
+class _CompositionData(ctypes.Structure):
+    _fields_ = [("attribute", ctypes.c_int), ("data", ctypes.POINTER(_AccentPolicy)), ("size", ctypes.c_size_t)]
+
+
+ACCENT_BLUR_BEHIND, WCA_ACCENT_POLICY = 3, 19
+
+
+def enable_blur(hwnd):
+    """Ask DWM to blur whatever is behind the window (undocumented SetWindowCompositionAttribute, as Windows' own
+    shell uses). It blurs the whole window rectangle, so pair it with set_region. False if Windows refused."""
+    try:
+        swca = ctypes.windll.user32.SetWindowCompositionAttribute
+    except AttributeError:
+        return False
+    policy = _AccentPolicy(ACCENT_BLUR_BEHIND, 0, 0, 0)  # no DWM tint: the island paints its own
+    data = _CompositionData(WCA_ACCENT_POLICY, ctypes.pointer(policy), ctypes.sizeof(policy))
+    return bool(swca(wintypes.HWND(hwnd), ctypes.byref(data)))
+
+
+def set_region(hwnd, points):
+    """Clip the window to a polygon (physical pixels): the blur and the mouse only exist inside it."""
+    arr = (wintypes.POINT * len(points))(*[wintypes.POINT(round(x), round(y)) for x, y in points])
+    rgn = ctypes.windll.gdi32.CreatePolygonRgn(arr, len(points), 2)  # WINDING
+    if rgn and not ctypes.windll.user32.SetWindowRgn(wintypes.HWND(hwnd), rgn, False):
+        ctypes.windll.gdi32.DeleteObject(rgn)  # on success the window owns the region

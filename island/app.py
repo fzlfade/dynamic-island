@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from ctypes import wintypes
 
 from PySide6.QtCore import QBuffer, QByteArray, QEasingCurve, QIODevice, QPointF, QRectF, Qt, QTimer, QVariantAnimation, Signal
-from PySide6.QtGui import (QColor, QIcon, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter,
+from PySide6.QtGui import (QColor, QCursor, QIcon, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter,
                            QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
@@ -259,11 +259,15 @@ class Island(QWidget):
         media.changed.connect(self._on_media)
         QTimer(self, interval=1000, timeout=self._check_fullscreen).start()
 
+        self.blur_on, self._clip_key, self._gap_hover = False, None, False
         screen = QGuiApplication.primaryScreen().geometry()
         self.setGeometry(screen.x() + (screen.width() - WIN_W) // 2, screen.y(), WIN_W, WIN_H)
         self.show()
         hwnd = int(self.winId())  # WS_EX_NOACTIVATE: clicking the island never steals focus
         ctypes.windll.user32.SetWindowLongPtrW(hwnd, -20, ctypes.windll.user32.GetWindowLongPtrW(hwnd, -20) | 0x08000000)
+        # real glass: DWM blurs what is behind; skipped when Windows' Transparency effects is off (solid glass)
+        self.blur_on = theme.GLASS_OPACITY < 1 and system.enable_blur(hwnd)
+        QTimer(self, interval=40, timeout=self._poll_gap).start()
 
     # --- state ---------------------------------------------------------------
     def _on_media(self, info):
@@ -841,9 +845,11 @@ class Island(QWidget):
         r = self._island_rect()
         radius = min(CORNER, r.height() / 2, r.width() / 2)
         path = island_path(r, EAR * max(0.0, min(self.expand, 1.0)), radius, self.floating)
-        if self.floating and r.height() >= 12:  # near-invisible strip above: Windows only sends hover over painted pixels
+        if self.blur_on:
+            self._clip_window(path)  # the blur covers the whole window rectangle unless the window is the island
+        elif self.floating and r.height() >= 12:  # near-invisible strip above: Windows only sends hover over painted pixels
             p.fillRect(QRectF(r.left() + radius, 0, max(0.0, r.width() - 2 * radius), r.top()), QColor(0, 0, 0, 1))
-        self._draw_shadow(p, path, r)
+            self._draw_shadow(p, path, r)  # with blur the window ends at the island, so there's no room for one
         p.fillPath(path, theme.ISLAND)
         self._draw_glass(p, path, r)
         self.buttons = {}
@@ -864,6 +870,36 @@ class Island(QWidget):
                 self.page_hits = {}
         elif r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
             self._draw_compact(p, r, 1 - self.expand * 2, path)
+
+    def _clip_window(self, path):
+        """Shape the window (and so DWM's blur and the mouse) to the island; only when the shape changed."""
+        dpr = self.devicePixelRatioF()
+        points = [(pt.x() * dpr, pt.y() * dpr) for pt in path.toFillPolygon()]
+        key = tuple((round(x), round(y)) for x, y in points)
+        if key != self._clip_key:
+            self._clip_key = key
+            system.set_region(int(self.winId()), points)
+
+    def _poll_gap(self):
+        """With blur the window is clipped to the island, so the floating gap above gets no mouse events: watch the
+        cursor instead, so flinging the pointer to the top edge still opens the island."""
+        if not (self.blur_on and self.floating):
+            return
+        pos = QPointF(self.mapFromGlobal(QCursor.pos()))
+        r = self._island_rect()
+        if QRectF(r.left(), 0, r.width(), r.top()).contains(pos):
+            self.leave_delay.stop()
+            if not self.hovered:
+                self.hovered = self._gap_hover = True
+                if self.expand < 0.5:
+                    self._peek_to(1.0)
+                    if not self.on_click:
+                        self.dwell.start()
+        elif self._gap_hover:
+            self._gap_hover = False
+            if not r.contains(pos) and self.hovered:  # left the gap for somewhere else, not into the island
+                self.hovered = False
+                self._leave()
 
     def _draw_shadow(self, p, path, r):
         """Soft shadow under a floating island (outside the glass only, so the glass itself stays clear)."""

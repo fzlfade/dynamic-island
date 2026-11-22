@@ -256,3 +256,34 @@ def test_focus_today_log(qapp):
     f._log_focus(25, d)
     f._log_focus(25, d)
     assert f.today(d) == (50, 2) and f.today(date(2026, 11, 23)) == (0, 0)
+
+
+def test_blur_clips_the_window_to_the_island(island, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app.system, "set_region", lambda hwnd, pts: calls.append(pts))
+    island.blur_on, island._clip_key = True, None
+    island.info = {}
+    island._set_expand(0.0)
+    island.grab()
+    island.grab()
+    assert len(calls) == 1, "the region is only rebuilt when the shape changes"
+    r = island._island_rect()
+    xs, ys = [x for x, _ in calls[0]], [y for _, y in calls[0]]
+    dpr = island.devicePixelRatioF()
+    assert abs(min(xs) - r.left() * dpr) < 2 and abs(max(ys) - r.bottom() * dpr) < 2, "region = the island's shape"
+
+
+def test_gap_above_a_blurred_floating_island_still_opens_it(island, monkeypatch):
+    from PySide6.QtCore import QPoint
+    island.blur_on, island.floating = True, True
+    island.info = {}
+    island._set_expand(0.0)
+    r = island._island_rect()
+    at = island.mapToGlobal(QPoint(int(r.center().x()), 2))
+    monkeypatch.setattr(app.QCursor, "pos", staticmethod(lambda: at))
+    island._poll_gap()
+    assert island.hovered and island.dwell.isActive(), "pointer at the top edge, above the island"
+    away = island.mapToGlobal(QPoint(5, 200))
+    monkeypatch.setattr(app.QCursor, "pos", staticmethod(lambda: away))
+    island._poll_gap()
+    assert not island.hovered and not island.dwell.isActive(), "and moving away lets it go"
