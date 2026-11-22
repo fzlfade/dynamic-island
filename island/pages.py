@@ -65,7 +65,7 @@ def plus_circle(p, c, r=7.5):
     p.setPen(Qt.NoPen)
     p.setBrush(WHITE)
     p.drawEllipse(c, r, r)
-    p.setPen(QPen(theme.ISLAND, 1.8, Qt.SolidLine, Qt.RoundCap))
+    p.setPen(QPen(theme.ISLAND_SOLID, 1.8, Qt.SolidLine, Qt.RoundCap))
     p.drawLine(QPointF(c.x() - r * 0.5, c.y()), QPointF(c.x() + r * 0.5, c.y()))
     p.drawLine(QPointF(c.x(), c.y() - r * 0.5), QPointF(c.x(), c.y() + r * 0.5))
 

@@ -6,8 +6,8 @@ from island import theme
 
 
 def test_ui_font_is_installed_not_a_fallback(qapp):
-    # a missing family silently falls back to Tahoma; Bahnschrift ships with Windows 10+
-    assert QFontInfo(theme.font(10)).family() == theme.FAMILY == "Bahnschrift"
+    # a missing family silently falls back to Tahoma
+    assert QFontInfo(theme.font(10)).family() == theme.FAMILY == "Segoe UI"
 
 
 def _contrast(a, b):
@@ -19,13 +19,27 @@ def _contrast(a, b):
     return (hi + 0.05) / (lo + 0.05)
 
 
-def test_token_contrast_meets_wcag():
-    for bg in (theme.ISLAND, theme.SURFACE, theme.CARD, theme.CHIP):
-        for fg in (theme.TEXT, theme.TEXT_MUTED, theme.PRIMARY, theme.SECONDARY, theme.SUCCESS, theme.DANGER):
-            assert _contrast(fg, bg) >= 4.5, (fg.name(), bg.name())
-        assert _contrast(theme.TEXT_DIM, bg) >= 3.0, ("non-text marks need 3:1", bg.name())
-    for fill in (theme.PRIMARY, theme.SECONDARY):
-        assert _contrast(theme.ON_ACCENT, fill) >= 4.5, "text on filled neon buttons"
+def _over(top, below):
+    """What a translucent token looks like over an opaque colour."""
+    from PySide6.QtGui import QColor
+    a = top.alphaF()
+    return QColor(*(round(a * t + (1 - a) * b) for t, b in ((top.red(), below.red()), (top.green(), below.green()),
+                                                           (top.blue(), below.blue()))))
+
+
+def test_token_contrast_meets_wcag_on_glass_over_any_backdrop():
+    from PySide6.QtGui import QColor
+    for backdrop in (QColor("#ffffff"), QColor("#000000"), QColor("#808080")):  # glass shows what's behind it
+        island, window = _over(theme.ISLAND, backdrop), _over(theme.SURFACE, backdrop)
+        layers = [island, window] + [_over(t, base) for base in (island, window)
+                                     for t in (theme.CARD, theme.CHIP, theme.CHIP_DARK, theme.SELECTED)]
+        for bg in layers:
+            for fg in (theme.TEXT, theme.TEXT_MUTED, theme.PRIMARY, theme.SECONDARY, theme.SUCCESS, theme.WARNING,
+                       theme.DANGER):
+                assert _contrast(fg, bg) >= 4.5, (fg.name(), bg.name(), backdrop.name())
+            assert _contrast(theme.TEXT_DIM, bg) >= 3.0, ("non-text marks need 3:1", bg.name())
+    for fill in (theme.PRIMARY_FILL, theme.SECONDARY_FILL):
+        assert _contrast(theme.ON_ACCENT, fill) >= 4.5, "text on filled buttons"
 
 
 def test_ui_modules_use_tokens_not_colour_literals():

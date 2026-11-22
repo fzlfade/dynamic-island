@@ -57,7 +57,7 @@ EXPANDED = (455.0, 197.0)  # measured on Nusa 1.3.1
 LYRICS_EXPANDED = (600.0, 197.0)  # Nusa's lyrics view: player left, lyrics right (from a screenshot)
 EAR, CORNER = 22.0, 36.0
 BAR_EXTRA = 30.0  # the island grows this much while the page-icons bar shows  # concave flare where the notch meets the bezel; bottom corner radius
-WIN_W, WIN_H = 660, 240  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
+WIN_W, WIN_H = 660, 252  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
 NOTIFY_SECONDS = 4.0
 DEFAULT_PAGES = "media,widgets,focus,water,shelf,todo"
 NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
@@ -843,8 +843,9 @@ class Island(QWidget):
         path = island_path(r, EAR * max(0.0, min(self.expand, 1.0)), radius, self.floating)
         if self.floating and r.height() >= 12:  # near-invisible strip above: Windows only sends hover over painted pixels
             p.fillRect(QRectF(r.left() + radius, 0, max(0.0, r.width() - 2 * radius), r.top()), QColor(0, 0, 0, 1))
+        self._draw_shadow(p, path, r)
         p.fillPath(path, theme.ISLAND)
-        self._draw_neon(p, path, r)
+        self._draw_glass(p, path, r)
         self.buttons = {}
         self.page_hits = {}
         if self._hud_active() and self.expand < 0.5:
@@ -853,7 +854,6 @@ class Island(QWidget):
         if self.expand >= 0.5:
             fade = min((self.expand - 0.5) * 2, 1.0)
             self._glow(p, path, r, fade * self.wide_v)
-            self._draw_scanlines(p, path, r, fade)
             p.setOpacity(fade * (1 - self.wide_v))  # the lyrics view has no header, dots or arrows
             self._draw_header(p, r)
             p.setOpacity(fade)
@@ -865,29 +865,40 @@ class Island(QWidget):
         elif r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
             self._draw_compact(p, r, 1 - self.expand * 2, path)
 
-    @staticmethod
-    def _draw_neon(p, path, r):
-        """Cyberpunk neon hairline round the island (a soft wide pass, then a crisp one); skips the 4 px pill."""
-        if r.height() < 12:
+    def _draw_shadow(self, p, path, r):
+        """Soft shadow under a floating island (outside the glass only, so the glass itself stays clear)."""
+        if not self.floating or r.height() < 12:
             return
+        outside = QPainterPath()
+        outside.addRect(QRectF(0, 0, WIN_W, WIN_H))
         p.save()
-        p.setClipRect(QRectF(0, 1.5, WIN_W, WIN_H))  # no line along the screen's top edge
-        p.setBrush(Qt.NoBrush)
-        for width, a in ((4.0, 40), (1.0, 255 * theme.EDGE_ALPHA)):
-            p.setPen(QPen(theme.alpha(theme.PRIMARY, a), width))
-            p.drawPath(path)
+        p.setClipPath(outside.subtracted(path))
+        p.setPen(Qt.NoPen)
+        n = theme.SHADOW_SPREAD
+        for k in range(n, 0, -1):  # stacked faint rounded rects read as a blur
+            p.setBrush(theme.alpha(theme.ISLAND_SOLID, theme.SHADOW_ALPHA / n))
+            grown = r.adjusted(-k, 0, k, k + 3)  # falls down and out, never up into the gap
+            rad = min(CORNER, r.height() / 2) + k
+            p.drawRoundedRect(grown, rad, rad)
         p.restore()
 
     @staticmethod
-    def _draw_scanlines(p, path, r, strength):
-        """Faint static CRT lines behind the open island's content (no motion, so nothing to reduce)."""
+    def _draw_glass(p, path, r):
+        """Liquid glass: a specular sheen across the top and a light rim that fades toward the bottom."""
+        if r.height() < 12:
+            return
         p.save()
-        p.setClipPath(path)
-        p.setPen(QPen(theme.alpha(theme.PRIMARY, theme.SCANLINE_ALPHA * strength), 1))
-        y = r.top() + 2.5
-        while y < r.bottom():
-            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
-            y += 3
+        sheen = QLinearGradient(0, r.top(), 0, r.top() + r.height() * 0.45)
+        sheen.setColorAt(0, theme.alpha(theme.TEXT, theme.SHEEN_ALPHA))
+        sheen.setColorAt(1, theme.alpha(theme.TEXT, 0))
+        p.fillPath(path, sheen)
+        rim = QLinearGradient(0, r.top(), 0, r.bottom())
+        rim.setColorAt(0, theme.alpha(theme.TEXT, theme.RIM_ALPHA))
+        rim.setColorAt(1, theme.alpha(theme.TEXT, theme.RIM_ALPHA / 4))
+        p.setClipRect(QRectF(0, 1.5, WIN_W, WIN_H))  # no line along the screen's top edge
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(rim, 1))
+        p.drawPath(path)
         p.restore()
 
     def _glow(self, p, path, r, strength):
@@ -1191,7 +1202,7 @@ def make_tray(parent):
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(theme.ISLAND)
+    p.setBrush(theme.ISLAND_SOLID)
     p.setPen(theme.PRIMARY)  # keeps the black pill visible on a dark taskbar
     p.drawRoundedRect(QRectF(0.5, 4.5, 15, 7), 3.5, 3.5)
     p.end()

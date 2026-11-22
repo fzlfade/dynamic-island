@@ -10,11 +10,11 @@ def test_rendering_and_render_timer(island, fake_media, tmp_path):
     img = island.grab().toImage()
     r = island._island_rect()
     assert island.floating and r.top() == app.FLOAT_GAP and r.width() == app.CLOCK_PILL[0], "floating clock pill"
-    assert img.pixelColor(app.WIN_W // 2, int(r.center().y())).alpha() == 255
+    assert img.pixelColor(app.WIN_W // 2, int(r.center().y())).alpha() >= 200
     assert img.pixelColor(app.WIN_W // 2, 2).alpha() <= 1, "the gap above is all but invisible (it only catches hover)"
     island.floating, island.minimal = False, True  # the settings' Notch style and Minimal idle pill
     img = island.grab().toImage()
-    assert img.pixelColor(app.WIN_W // 2, 2).alpha() == 255, "the minimal idle pill is opaque at top centre"
+    assert img.pixelColor(app.WIN_W // 2, 2).alpha() >= 200, "the minimal idle pill is solid glass at top centre"
     assert img.pixelColor(app.WIN_W // 2, 8).alpha() == 0, "and only 4 px tall, like Nusa's"
     assert img.pixelColor(5, 100).alpha() == 0, "outside the pill must be transparent (click-through)"
 
@@ -25,8 +25,8 @@ def test_rendering_and_render_timer(island, fake_media, tmp_path):
     island._set_expand(1.0)
     img = island.grab().toImage()
     assert set(island.buttons) == {"lyrics", "prev", "toggle", "next", "volume"}
-    assert img.pixelColor(app.WIN_W // 2, 190).alpha() == 255, "expanded island is Nusa's 197 px tall"
-    assert img.pixelColor(int((app.WIN_W - app.EXPANDED[0]) / 2) - 8, 2).alpha() == 255, "ears flare into the bezel"
+    assert img.pixelColor(app.WIN_W // 2, 190).alpha() >= 200, "expanded island is Nusa's 197 px tall"
+    assert img.pixelColor(int((app.WIN_W - app.EXPANDED[0]) / 2) - 8, 2).alpha() >= 200, "ears flare into the bezel"
 
     fake_media.changed.emit({"title": "x", "artist": "y", "playing": False})
     assert not island.frame.isActive(), "render timer stops when paused (idle like Nusa)"

@@ -10,7 +10,7 @@ from island import prayer, store, theme, widgets
 S, W = "settings.txt", "water.txt"
 GREEN, GREY = theme.SUCCESS, theme.TEXT_MUTED
 
-SECTIONS = [  # (name, neon glyph colour, Segoe Fluent glyph)
+SECTIONS = [  # (name, glyph colour, Segoe Fluent glyph)
     ("General", theme.TEXT_MUTED, ""), ("Pages", theme.PRIMARY, ""), ("Appearance", theme.SECONDARY, ""),
     ("Music and lyrics", theme.SECONDARY, ""), ("Notifications", theme.DANGER, ""), ("To-do", theme.SUCCESS, ""),
     ("Pomodoro", theme.SECONDARY, ""), ("Water", theme.PRIMARY, ""), ("Prayer", theme.PRIMARY, ""),
@@ -86,7 +86,7 @@ FIELDS = [
 LOCATION = ("place", "lat", "lon")
 
 _c = {k: theme.hex_(getattr(theme, k)) for k in ("TEXT", "TEXT_MUTED", "TEXT_DIM", "CARD", "LINE", "INPUT", "CHIP",
-                                                   "PRIMARY", "ON_ACCENT")}
+                                                   "PRIMARY", "PRIMARY_FILL", "ON_ACCENT")}
 STYLE = f"""
 QWidget {{ background: transparent; color: {_c["TEXT"]}; }}
 QLabel#title {{ font-size: 20px; font-weight: 700; letter-spacing: 1px; }}
@@ -99,7 +99,7 @@ QLineEdit, QDoubleSpinBox, QComboBox {{ background: {_c["INPUT"]}; border: 1px s
     border-radius: {theme.RADIUS_SM:g}px; padding: 4px 8px; min-width: 150px; color: {_c["TEXT"]}; }}
 QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {{ border: {theme.FOCUS_WIDTH:g}px solid {_c["PRIMARY"]}; }}
 QLineEdit:disabled, QDoubleSpinBox:disabled {{ color: {_c["TEXT_DIM"]}; }}
-QComboBox QAbstractItemView {{ background: {_c["CHIP"]}; selection-background-color: {_c["PRIMARY"]};
+QComboBox QAbstractItemView {{ background: {theme.hex_(theme.ISLAND_SOLID)}; selection-background-color: {_c["PRIMARY_FILL"]};
     selection-color: {_c["ON_ACCENT"]}; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 """
@@ -132,7 +132,7 @@ class Switch(QAbstractButton):
         p.setOpacity(1.0 if self.isEnabled() else 0.4)
         p.setBrush(GREEN if self.isChecked() else theme.TRACK)
         p.drawRoundedRect(QRectF(2, 3, 40, 22), theme.RADIUS_MD, theme.RADIUS_MD)
-        p.setBrush(theme.ON_ACCENT if self.isChecked() else theme.TEXT_MUTED)
+        p.setBrush(theme.TEXT if self.isChecked() else theme.TEXT_MUTED)
         p.drawRoundedRect(QRectF(23 if self.isChecked() else 5, 6, 16, 16), theme.RADIUS_SM, theme.RADIUS_SM)
         _focus_ring(p, self, QRectF(1, 2, 42, 24), theme.RADIUS_MD + 1)
 
@@ -219,11 +219,11 @@ class Segmented(QWidget):
         p.setBrush(theme.CHIP_DARK)
         p.drawRoundedRect(QRectF(self.rect()), theme.RADIUS_MD, theme.RADIUS_MD)
         w = (self.width() - 4) / len(self.options)
-        p.setBrush(theme.PRIMARY)
+        p.setBrush(theme.SELECTED)  # a lighter glass segment, as on Apple's segmented controls
         p.drawRoundedRect(QRectF(2 + self.index * w, 2, w, self.height() - 4), theme.RADIUS_SM, theme.RADIUS_SM)
         p.setFont(theme.font(9))
         for i, text in enumerate(self.options):
-            p.setPen(theme.ON_ACCENT if i == self.index else GREY)
+            p.setPen(theme.TEXT if i == self.index else GREY)
             p.drawText(QRectF(2 + i * w, 0, w, self.height()), Qt.AlignCenter, text)
         _focus_ring(p, self, QRectF(self.rect()).adjusted(1, 1, -1, -1), theme.RADIUS_MD)
 
@@ -301,7 +301,7 @@ class WidgetTile(QAbstractButton):
         if self.badge:
             tag = QRectF(box.right() - 22, box.top() + 5, 17, 17)
             p.setPen(Qt.NoPen)
-            p.setBrush(theme.PRIMARY)
+            p.setBrush(theme.PRIMARY_FILL)
             p.drawRoundedRect(tag, theme.RADIUS_SM, theme.RADIUS_SM)
             p.setPen(theme.ON_ACCENT)
             p.setFont(theme.font(8, QFont.Bold))
@@ -365,7 +365,7 @@ class SidebarItem(QAbstractButton):
             p.setBrush(theme.CHIP)
             p.drawRoundedRect(QRectF(self.rect()).adjusted(2, 0, -2, 0), theme.RADIUS_MD, theme.RADIUS_MD)
             p.setBrush(theme.PRIMARY)
-            p.drawRect(QRectF(2, 6, 2, self.height() - 12))  # neon marker on the open section
+            p.drawRect(QRectF(2, 6, 2, self.height() - 12))  # accent marker on the open section
         tile = QRectF(10, 5, 22, 22)
         p.setPen(QPen(theme.alpha(self.color, 140), 1))
         p.setBrush(theme.CHIP_DARK)
@@ -395,7 +395,7 @@ class RoundButton(QAbstractButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(QPen(theme.alpha(theme.PRIMARY, 90), 1))
-        p.setBrush(theme.alpha(theme.PRIMARY, 60) if self.isDown() else theme.CHIP)  # pressed: neon tint
+        p.setBrush(theme.SELECTED if self.isDown() else theme.CHIP)  # pressed: lighter glass
         p.drawRoundedRect(QRectF(3, 3, 20, 20), theme.RADIUS_SM, theme.RADIUS_SM)
         _focus_ring(p, self, QRectF(1, 1, 24, 24), theme.RADIUS_MD)
         p.setPen(theme.TEXT)
@@ -530,11 +530,11 @@ class SettingsWindow(QWidget):
         p.setClipPath(shape)
         p.fillRect(QRectF(0, 0, 194, self.height()), theme.SURFACE_2)
         p.restore()
-        p.setPen(QPen(theme.alpha(theme.PRIMARY, 140), 1))  # neon frame
+        p.setPen(QPen(theme.alpha(theme.TEXT, theme.RIM_ALPHA), 1))  # glass rim
         p.setBrush(Qt.NoBrush)
         p.drawPath(shape)
         p.setPen(Qt.NoPen)
-        p.setBrush(theme.DANGER)
+        p.setBrush(theme.CLOSE)
         p.drawEllipse(QPointF(20, 18), 6, 6)
 
     def mousePressEvent(self, e):

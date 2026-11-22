@@ -1,11 +1,15 @@
-"""Design tokens for the island and the settings window: Cyberpunk UI (neon on near-black, dark only).
+"""Design tokens for the island and the settings window: Liquid Glass (dark translucent material, colour used
+sparingly). Components import these names instead of writing colours inline.
 
-Colours, type, radii and effects live here; components import these names instead of writing colours inline.
-Fonts are Windows' own (Bahnschrift's DIN shapes for text, tabular digits), so nothing is downloaded."""
+Glass is a tinted, semi-transparent fill with a specular sheen and a light rim; Windows' "Transparency effects"
+switch turns it opaque (the reduced-transparency fallback). Contrast is checked against the worst backdrop (glass
+over white), so text stays readable whatever is behind the island."""
+import winreg
+
 from PySide6.QtGui import QColor, QFont
 
 # --- type ---------------------------------------------------------------------
-FAMILY = "Bahnschrift"  # ships with Windows 10+; engineered DIN letterforms read as HUD text
+FAMILY = "Segoe UI"  # Windows' system face: the platform-native choice for a system material
 ICONS = "Segoe Fluent Icons"
 
 
@@ -16,38 +20,17 @@ def font(size, weight=QFont.Normal):
     return f
 
 
-# --- colour -------------------------------------------------------------------
-# Surfaces
-ISLAND = QColor(0, 0, 0)  # the notch itself stays pure black so it blends into the screen bezel
-SURFACE = QColor("#0a0f14")  # settings window
-SURFACE_2 = QColor("#0f161d")  # settings sidebar
-CARD = QColor("#111c25")  # grouped rows in settings
-CHIP = QColor("#0f1c26")  # tiles, chips, placeholder cover, round buttons
-CHIP_DARK = QColor("#0a131a")  # page-icons bar, segmented track
-LINE = QColor("#1d3340")  # separators and dividers
-TRACK = QColor("#1b2c37")  # empty part of progress bars and switches
-INPUT = QColor("#13222d")  # text fields
+def transparency_enabled():
+    """Windows Settings > Personalization > Colors > Transparency effects (on when unreadable)."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "EnableTransparency")[0] != 0
+    except OSError:
+        return True
 
-# Text and icons (contrast on ISLAND/SURFACE: TEXT 18:1, TEXT_MUTED 8:1, TEXT_DIM 3.4:1 for non-text marks only)
-TEXT = QColor("#e8fbff")
-TEXT_MUTED = QColor("#8fb3c2")
-TEXT_DIM = QColor("#4d6f7d")
 
-# Neon accents
-PRIMARY = QColor("#00f0ff")  # cyan: progress, active page, focus ring, links
-SECONDARY = QColor("#ff2bd6")  # magenta: Pomodoro, highlights
-SUCCESS = QColor("#39ff88")  # charging, on, done
-WARNING = QColor("#ffb020")
-DANGER = QColor("#ff3b5c")  # low battery, errors, close
-ON_ACCENT = QColor("#00161a")  # text on a filled neon button
-
-# --- shape and effects ----------------------------------------------------------
-RADIUS_SM = 2.0  # bars, chips: cyberpunk keeps corners hard
-RADIUS_MD = 4.0  # buttons, tiles, cover art
-RADIUS_LG = 8.0  # settings window, cards
-FOCUS_WIDTH = 2.0  # keyboard focus ring (PRIMARY)
-EDGE_ALPHA = 0.55  # neon hairline along the island's edge
-SCANLINE_ALPHA = 10  # 0-255, CRT scanlines over the open island; static, so nothing moves
+# shortcut: read once at start-up; restart the island after changing Windows' transparency switch
+GLASS_OPACITY = 0.90 if transparency_enabled() else 1.0
 
 
 def alpha(color, a):
@@ -57,6 +40,52 @@ def alpha(color, a):
     return c
 
 
+def _glass(rgb, opacity=None):
+    return alpha(QColor(rgb), 255 * (GLASS_OPACITY if opacity is None else opacity))
+
+
 def hex_(color):
-    """#rrggbb for stylesheets."""
-    return QColor(color).name()
+    """#rrggbb, or #aarrggbb with transparency, for stylesheets."""
+    c = QColor(color)
+    return c.name(QColor.HexArgb if c.alpha() < 255 else QColor.HexRgb)
+
+
+# --- colour -------------------------------------------------------------------
+# Glass surfaces (alpha = translucency)
+ISLAND = _glass("#141418")  # the island's glass
+ISLAND_SOLID = QColor("#141418")  # places that must stay opaque: tray icon, cut-outs
+SURFACE = _glass("#1c1c22", max(GLASS_OPACITY, 0.92))  # settings window: denser, it holds long text
+SURFACE_2 = alpha(QColor("#ffffff"), 10)  # sidebar layer on the window glass
+CARD = alpha(QColor("#ffffff"), 14)  # grouped rows
+CHIP = alpha(QColor("#ffffff"), 22)  # tiles, chips, placeholder cover, round buttons
+CHIP_DARK = alpha(QColor("#ffffff"), 12)  # page-icons bar, widget cards, segmented track
+SELECTED = alpha(QColor("#ffffff"), 34)  # the chosen segment, pressed buttons
+LINE = alpha(QColor("#ffffff"), 30)  # separators and dividers
+TRACK = alpha(QColor("#ffffff"), 46)  # empty part of progress bars and switches
+INPUT = alpha(QColor("#ffffff"), 20)  # text fields
+
+# Text and icons: tests check 4.5:1 (TEXT_DIM 3:1, marks only) on every glass layer over white, grey and black
+TEXT = QColor("#ffffff")
+TEXT_MUTED = QColor("#c4c4cc")
+TEXT_DIM = QColor("#a0a0aa")
+
+# Accents: light tints for text and marks on glass, deeper fills behind white text
+PRIMARY = QColor("#86c8ff")  # progress, current page, focus ring, links
+SECONDARY = QColor("#e4adff")  # Pomodoro, highlights
+SUCCESS = QColor("#5fe08c")  # charging, on, done
+WARNING = QColor("#ffd60a")
+DANGER = QColor("#ffaaa3")  # low battery, errors
+CLOSE = QColor("#ff5f57")  # the settings window's close dot
+PRIMARY_FILL = QColor("#0a66e0")  # filled buttons, selection, today
+SECONDARY_FILL = QColor("#8a3fd1")
+ON_ACCENT = QColor("#ffffff")  # text on PRIMARY_FILL / SECONDARY_FILL
+
+# --- shape and effects ----------------------------------------------------------
+RADIUS_SM = 6.0  # bars, chips: glass is soft and round
+RADIUS_MD = 12.0  # buttons, tiles, cover art, cards
+RADIUS_LG = 20.0  # settings window, panels
+FOCUS_WIDTH = 2.0  # keyboard focus ring (PRIMARY)
+SHEEN_ALPHA = 34  # specular highlight across the top of the glass
+RIM_ALPHA = 70  # light rim where the glass catches light (top); fades toward the bottom
+SHADOW_ALPHA = 70  # soft drop shadow under the floating island
+SHADOW_SPREAD = 10  # px

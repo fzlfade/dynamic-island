@@ -87,7 +87,7 @@ class WidgetsPage(Page):
             num = QRectF(cell.center().x() - 10, box.top() + 18, 20, 20)
             if d == today:
                 p.setPen(Qt.NoPen)
-                p.setBrush(theme.PRIMARY)
+                p.setBrush(theme.PRIMARY_FILL)
                 p.drawRoundedRect(num, theme.RADIUS_SM, theme.RADIUS_SM)
             island._text(p, num, str(d.day), 9, theme.ON_ACCENT if d == today else theme.TEXT, Qt.AlignCenter,
                          bold=d == today)
