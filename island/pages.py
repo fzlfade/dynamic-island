@@ -8,9 +8,9 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter
 
 from island import theme
 
-WHITE, GREY, DIM = QColor(255, 255, 255), QColor(142, 142, 147), QColor(72, 72, 76)
-CHIP, CHIP_DARK = QColor(44, 44, 46), QColor(28, 28, 30)
-GREEN, PURPLE, BLUE = QColor(48, 209, 88), QColor(168, 85, 247), QColor(10, 132, 255)
+WHITE, GREY, DIM = theme.TEXT, theme.TEXT_MUTED, theme.TRACK  # short names for the theme tokens
+CHIP, CHIP_DARK = theme.CHIP, theme.CHIP_DARK
+GREEN, PURPLE, BLUE = theme.SUCCESS, theme.SECONDARY, theme.PRIMARY
 
 
 def glyph(p, island, rect, ch, px, color=WHITE):
@@ -19,8 +19,8 @@ def glyph(p, island, rect, ch, px, color=WHITE):
     p.drawText(rect, Qt.AlignCenter, ch)
 
 
-def bar(p, rect, frac, fill=WHITE, track=DIM):
-    rad = rect.height() / 2
+def bar(p, rect, frac, fill=theme.PRIMARY, track=DIM):
+    rad = min(theme.RADIUS_SM, rect.height() / 2)
     p.setPen(Qt.NoPen)
     p.setBrush(track)
     p.drawRoundedRect(rect, rad, rad)
@@ -31,9 +31,9 @@ def bar(p, rect, frac, fill=WHITE, track=DIM):
 
 
 def pill(p, island, rect, text, bg, fg=WHITE, icon=None, bold=False):
-    """Rounded button: optional Fluent icon then text, centred together."""
-    rad = rect.height() / 2
-    p.setPen(Qt.NoPen)
+    """Button: optional Fluent icon then text, centred together, with a hairline in its text colour."""
+    rad = theme.RADIUS_MD
+    p.setPen(QPen(theme.alpha(fg, 70), 1))
     p.setBrush(bg)
     p.drawRoundedRect(rect, rad, rad)
     tw = QFontMetrics(theme.font(10)).horizontalAdvance(text)
@@ -65,7 +65,7 @@ def plus_circle(p, c, r=7.5):
     p.setPen(Qt.NoPen)
     p.setBrush(WHITE)
     p.drawEllipse(c, r, r)
-    p.setPen(QPen(QColor(0, 0, 0), 1.8, Qt.SolidLine, Qt.RoundCap))
+    p.setPen(QPen(theme.ISLAND, 1.8, Qt.SolidLine, Qt.RoundCap))
     p.drawLine(QPointF(c.x() - r * 0.5, c.y()), QPointF(c.x() + r * 0.5, c.y()))
     p.drawLine(QPointF(c.x(), c.y() - r * 0.5), QPointF(c.x(), c.y() + r * 0.5))
 
@@ -150,12 +150,12 @@ class MediaPage(Page):
     @staticmethod
     def _cover(p, island, art, info):
         if info.get("title"):
-            island._draw_art(p, art, 12)
+            island._draw_art(p, art, theme.RADIUS_MD)
             return info["title"]
         p.setPen(Qt.NoPen)  # Nusa keeps the whole player with a placeholder tile
         p.setBrush(CHIP)
-        p.drawRoundedRect(art, 12, 12)
-        glyph(p, island, art, "\uE8D6", 28, QColor(160, 160, 165))
+        p.drawRoundedRect(art, theme.RADIUS_MD, theme.RADIUS_MD)
+        glyph(p, island, art, "\uE8D6", 28, theme.TEXT_MUTED)
         return "Not Playing"
 
     def _draw_lyrics_view(self, p, r, island):
@@ -177,7 +177,7 @@ class MediaPage(Page):
         for action, cx in (("prev", L + 104), ("toggle", L + 148), ("next", L + 193)):
             island.buttons[action] = QRectF(cx - 20, cy - 16, 40, 32)
             self._draw_icon(p, island, action, QPointF(cx, cy))
-        p.setPen(QPen(QColor(255, 255, 255, 30), 1))
+        p.setPen(QPen(theme.LINE, 1))
         p.drawLine(QPointF(L + 288, T + 40), QPointF(L + 288, T + 170))
         self._draw_lines(p, QRectF(L + 302, T + 22, r.width() - 302 - 50, r.height() - 34), island)
 
@@ -211,7 +211,7 @@ class MediaPage(Page):
         while k < len(lyrics) and ky < box.bottom():
             h = height(k)
             dim = int(70 * (1 - ease)) if k < i else 70  # the line just sung fades out as it rises
-            p.setPen(QColor(255, 255, 255) if k == i else QColor(255, 255, 255, dim))
+            p.setPen(theme.TEXT if k == i else theme.alpha(theme.TEXT, dim))
             p.drawText(QRectF(box.left(), ky, box.width(), h), Qt.AlignLeft | Qt.TextWordWrap, wrap(k))
             ky += h + gap
             k += 1
@@ -230,7 +230,7 @@ class MediaPage(Page):
                 c = QPointF(x0 + i * 7, T + 104)
                 island.buttons[f"src{i}"] = QRectF(c.x() - 4, c.y() - 5, 8, 10)
                 p.setPen(Qt.NoPen)
-                p.setBrush(WHITE if i == info.get("source", 0) else DIM)
+                p.setBrush(WHITE if i == info.get("source", 0) else theme.TEXT_DIM)
                 p.drawEllipse(c, 1.8, 1.8)
         x, w = L + 126, r.right() - 37 - (L + 126)
         island._text(p, QRectF(x, T + 49, w, 24), title, 12, WHITE, Qt.AlignLeft, bold=True, scroll=playing)
@@ -327,30 +327,30 @@ class WaterPage(Page):
         self.hits["switch"] = sw = QRectF(L + 172, T + 64, 39, 22)
         p.setPen(Qt.NoPen)
         p.setBrush(GREEN if w.on else CHIP)
-        p.drawRoundedRect(sw, 11, 11)
+        p.drawRoundedRect(sw, theme.RADIUS_MD, theme.RADIUS_MD)
         knob = QPointF(sw.right() - 11 if w.on else sw.left() + 11, sw.center().y())
         p.setBrush(WHITE)
         p.drawEllipse(knob, 9, 9)
         p.save()
         p.translate(knob)
         p.scale(0.62, 0.62)
-        bell(p, QPointF(0, 0), QColor(70, 70, 74))
+        bell(p, QPointF(0, 0), theme.TEXT_DIM)
         p.restore()
         pct = round(100 * w.taken / w.goal) if w.goal else 0
         island._text(p, QRectF(L + 37, T + 96, 200, 20), f"Today · {pct}% · Reminders {'on' if w.on else 'off'}", 10,
                      GREY, Qt.AlignLeft)
         bar(p, QRectF(L + 37, T + 121, 174, 5), w.taken / w.goal if w.goal else 0, BLUE)
         self.hits["drink"] = QRectF(L + 37, T + 141, 66, 29)
-        pill(p, island, self.hits["drink"], "Drink", QColor(10, 132, 255, 55), QColor(120, 180, 255), "")
+        pill(p, island, self.hits["drink"], "Drink", theme.alpha(theme.PRIMARY, 55), theme.PRIMARY, "")
         self.hits["settings"] = QRectF(L + 111, T + 141, 72, 29)
         pill(p, island, self.hits["settings"], "Settings", CHIP, WHITE, "")
         self._chart(p, island, QRectF(L + 228, T + 82, 144, 70))
 
     def _chart(self, p, island, a):
-        p.setPen(QPen(QColor(50, 50, 54), 1))
+        p.setPen(QPen(theme.LINE, 1))
         p.drawLine(QPointF(a.left() - 3, a.top() - 12), QPointF(a.left() - 3, a.bottom() + 16))
         p.drawLine(QPointF(a.left(), a.bottom()), QPointF(a.right(), a.bottom()))
-        dash = QPen(QColor(70, 70, 74), 1, Qt.DashLine)
+        dash = QPen(theme.LINE, 1, Qt.DashLine)
         for ml, y in ((200, a.top()), (100, a.center().y())):
             p.setPen(dash)
             p.drawLine(QPointF(a.left(), y), QPointF(a.right(), y))
@@ -411,14 +411,14 @@ class TodoPage(Page):
         plus_circle(p, QPointF(self.hits["add"].center().x() - (tw + 20) / 2 + 8, self.hits["add"].center().y()))
         self.hits["edit"] = QRectF(L + 124, T + 141, 82, 29)
         pill(p, island, self.hits["edit"], "Done" if self.editing else "Edit Task",
-             CHIP if tasks else CHIP_DARK, WHITE if tasks else DIM, "")
+             CHIP if tasks else CHIP_DARK, WHITE if tasks else theme.TEXT_DIM, "")
         panel = QRectF(L + 212, T + 64, 206, 106)
         p.setPen(Qt.NoPen)
         p.setBrush(CHIP_DARK)
-        p.drawRoundedRect(panel, 16, 16)
+        p.drawRoundedRect(panel, theme.RADIUS_LG, theme.RADIUS_LG)
         if not tasks:
             p.setBrush(CHIP)
-            p.drawRoundedRect(QRectF(panel.center().x() - 19, panel.top() + 18, 38, 38), 9, 9)
+            p.drawRoundedRect(QRectF(panel.center().x() - 19, panel.top() + 18, 38, 38), theme.RADIUS_MD, theme.RADIUS_MD)
             glyph(p, island, QRectF(panel.center().x() - 19, panel.top() + 18, 38, 38), "", 20, GREY)
             island._text(p, QRectF(panel.left(), panel.top() + 62, panel.width(), 24), "No tasks.", 11, GREY,
                          Qt.AlignCenter)
@@ -431,7 +431,7 @@ class TodoPage(Page):
             p.setBrush(GREEN if t.done else Qt.NoBrush)
             p.drawEllipse(c, 6, 6)
             if self.editing:
-                glyph(p, island, QRectF(c.x() - 6, c.y() - 6, 12, 12), "", 8, QColor(255, 69, 58))
+                glyph(p, island, QRectF(c.x() - 6, c.y() - 6, 12, 12), "", 8, theme.DANGER)
             right = "" if t.at is None else f"{t.at // 60:02d}:{t.at % 60:02d}"
             island._text(p, row.adjusted(20, 0, -40, 0), t.text, 10, GREY if t.done else WHITE, Qt.AlignLeft)
             island._text(p, row, right, 9, GREY, Qt.AlignRight)

@@ -8,7 +8,7 @@ from PySide6.QtCore import QFileInfo, QMimeData, QPointF, QRectF, Qt, QUrl
 from PySide6.QtGui import QColor, QDrag, QPen
 from PySide6.QtWidgets import QFileIconProvider
 
-from island import store
+from island import theme, store
 from island.pages import GREY, WHITE, Page, tray
 
 MAX_CHIPS = 6
@@ -89,9 +89,9 @@ class ShelfPage(Page):
         """Nusa's shelf: a dashed drop zone; dropped items become chips inside it."""
         self.hits = []
         zone = QRectF(r.left() + 37, r.top() + 58, r.width() - 74, 105)
-        p.setPen(QPen(QColor(78, 78, 82), 1.4, Qt.DashLine))
+        p.setPen(QPen(theme.TEXT_DIM, 1.4, Qt.DashLine))
         p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(zone, 12, 12)
+        p.drawRoundedRect(zone, theme.RADIUS_LG, theme.RADIUS_LG)
         if not self.items:
             tray(p, QPointF(zone.center().x(), zone.top() + 30))
             island._text(p, QRectF(zone.left(), zone.top() + 50, zone.width(), 22), "Drop files here", 11, WHITE,
@@ -105,11 +105,11 @@ class ShelfPage(Page):
             chip = QRectF(zone.left() + 8 + col * (cw + self.GAP), zone.top() + 8 + row * (self.CHIP_H + self.GAP),
                           cw, self.CHIP_H)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(38, 38, 42))
-            p.drawRoundedRect(chip, 10, 10)
+            p.setBrush(theme.CHIP)
+            p.drawRoundedRect(chip, theme.RADIUS_MD, theme.RADIUS_MD)
             icon = self._icons.icon(QFileInfo(str(item.path))).pixmap(20, 20)
             p.drawPixmap(int(chip.left() + 8), int(chip.center().y() - 10), icon)
-            island._text(p, chip.adjusted(34, 0, -6, 0), item.path.name, 9, QColor(230, 230, 230), Qt.AlignLeft)
+            island._text(p, chip.adjusted(34, 0, -6, 0), item.path.name, 9, theme.TEXT, Qt.AlignLeft)
             self.hits.append((chip, n))
 
     def _at(self, pos):

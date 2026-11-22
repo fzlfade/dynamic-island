@@ -1,22 +1,21 @@
 """Settings window in Nusa's style: a sidebar of coloured section tiles; each section is cards of rows with a title,
 a grey subtitle and a control (switch, ± stepper, segmented choice). Every option here changes real behaviour."""
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTime, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
 from island import prayer, store, theme
 
 S, W = "settings.txt", "water.txt"
-BG, SIDEBAR, CARD, LINE = "#1c1c1e", "#232325", "#2c2c2e", "#38383a"
-GREEN, GREY = QColor(52, 199, 89), QColor(142, 142, 147)
+GREEN, GREY = theme.SUCCESS, theme.TEXT_MUTED
 
-SECTIONS = [  # (name, tile colour, Segoe Fluent glyph)
-    ("General", "#8e8e93", ""), ("Pages", "#0a84ff", ""), ("Appearance", "#3a3a3c", ""),
-    ("Music and lyrics", "#ff375f", ""), ("Notifications", "#ff3b30", ""), ("To-do", "#34c759", ""),
-    ("Pomodoro", "#af52de", ""), ("Water", "#0a84ff", ""), ("Prayer", "#30b0c7", ""),
-    ("Shelf", "#ff9f0a", ""), ("HUD & popups", "#32ade6", ""), ("Ask Claude", "#5e5ce6", ""),
-    ("About", "#636366", ""),
+SECTIONS = [  # (name, neon glyph colour, Segoe Fluent glyph)
+    ("General", theme.TEXT_MUTED, ""), ("Pages", theme.PRIMARY, ""), ("Appearance", theme.SECONDARY, ""),
+    ("Music and lyrics", theme.SECONDARY, ""), ("Notifications", theme.DANGER, ""), ("To-do", theme.SUCCESS, ""),
+    ("Pomodoro", theme.SECONDARY, ""), ("Water", theme.PRIMARY, ""), ("Prayer", theme.PRIMARY, ""),
+    ("Shelf", theme.WARNING, ""), ("HUD & popups", theme.PRIMARY, ""), ("Ask Claude", theme.SECONDARY, ""),
+    ("About", theme.TEXT_MUTED, ""),
 ]
 PAGES = [("media", "Music"), ("focus", "Pomodoro"), ("water", "Water"), ("shelf", "Shelf"), ("todo", "To-do"),
          ("today", "Today")]
@@ -77,20 +76,32 @@ FIELDS = [
 ]
 LOCATION = ("place", "lat", "lon")
 
+_c = {k: theme.hex_(getattr(theme, k)) for k in ("TEXT", "TEXT_MUTED", "TEXT_DIM", "CARD", "LINE", "INPUT", "CHIP",
+                                                   "PRIMARY", "ON_ACCENT")}
 STYLE = f"""
-QWidget {{ background: transparent; color: #f2f2f4; }}
-QLabel#title {{ font-size: 20px; font-weight: 700; }}
-QLabel#group {{ color: #8e8e93; font-size: 11px; padding: 10px 0 4px 6px; }}
-QLabel#sub {{ color: #8e8e93; font-size: 11px; }}
-QLabel#value {{ color: #8e8e93; }}
-QFrame#card {{ background: {CARD}; border-radius: 10px; }}
-QFrame#sep {{ background: {LINE}; max-height: 1px; min-height: 1px; margin-left: 14px; }}
-QLineEdit, QDoubleSpinBox, QComboBox {{ background: #3a3a3c; border: none; border-radius: 6px; padding: 4px 8px;
-    min-width: 150px; color: #f2f2f4; }}
-QLineEdit:disabled, QDoubleSpinBox:disabled {{ color: #5c5c64; }}
-QComboBox QAbstractItemView {{ background: #2c2c2e; selection-background-color: #0a84ff; }}
+QWidget {{ background: transparent; color: {_c["TEXT"]}; }}
+QLabel#title {{ font-size: 20px; font-weight: 700; letter-spacing: 1px; }}
+QLabel#group {{ color: {_c["PRIMARY"]}; font-size: 11px; letter-spacing: 1px; padding: 10px 0 4px 6px; }}
+QLabel#sub {{ color: {_c["TEXT_MUTED"]}; font-size: 11px; }}
+QLabel#value {{ color: {_c["TEXT_MUTED"]}; }}
+QFrame#card {{ background: {_c["CARD"]}; border: 1px solid {_c["LINE"]}; border-radius: {theme.RADIUS_MD:g}px; }}
+QFrame#sep {{ background: {_c["LINE"]}; max-height: 1px; min-height: 1px; margin-left: 14px; }}
+QLineEdit, QDoubleSpinBox, QComboBox {{ background: {_c["INPUT"]}; border: 1px solid {_c["LINE"]};
+    border-radius: {theme.RADIUS_SM:g}px; padding: 4px 8px; min-width: 150px; color: {_c["TEXT"]}; }}
+QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus {{ border: {theme.FOCUS_WIDTH:g}px solid {_c["PRIMARY"]}; }}
+QLineEdit:disabled, QDoubleSpinBox:disabled {{ color: {_c["TEXT_DIM"]}; }}
+QComboBox QAbstractItemView {{ background: {_c["CHIP"]}; selection-background-color: {_c["PRIMARY"]};
+    selection-color: {_c["ON_ACCENT"]}; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
 """
+
+
+def _focus_ring(p, widget, rect, radius):
+    """Keyboard focus: a cyan outline, so Tab shows where you are on the custom-drawn controls."""
+    if widget.hasFocus():
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(theme.PRIMARY, theme.FOCUS_WIDTH))
+        p.drawRoundedRect(rect, radius, radius)
 
 
 class Switch(QAbstractButton):
@@ -103,17 +114,18 @@ class Switch(QAbstractButton):
         self.toggled.connect(lambda _: self.update())
 
     def sizeHint(self):
-        return QSize(40, 24)
+        return QSize(44, 28)  # 2 px round the 40x22 body for the focus ring
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
         p.setOpacity(1.0 if self.isEnabled() else 0.4)
-        p.setBrush(GREEN if self.isChecked() else QColor(72, 72, 76))
-        p.drawRoundedRect(QRectF(0, 1, 40, 22), 11, 11)
-        p.setBrush(QColor(255, 255, 255))
-        p.drawEllipse(QPointF(29 if self.isChecked() else 11, 12), 9, 9)
+        p.setBrush(GREEN if self.isChecked() else theme.TRACK)
+        p.drawRoundedRect(QRectF(2, 3, 40, 22), theme.RADIUS_MD, theme.RADIUS_MD)
+        p.setBrush(theme.ON_ACCENT if self.isChecked() else theme.TEXT_MUTED)
+        p.drawRoundedRect(QRectF(23 if self.isChecked() else 5, 6, 16, 16), theme.RADIUS_SM, theme.RADIUS_SM)
+        _focus_ring(p, self, QRectF(1, 2, 42, 24), theme.RADIUS_MD + 1)
 
 
 class Stepper(QWidget):
@@ -171,6 +183,7 @@ class Segmented(QWidget):
         self.options, self.index = options, 0
         self.setFixedSize(46 * len(options) + 4, 26)
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)  # Tab reaches it; Left/Right choose
 
     def currentText(self):
         return self.options[self.index]
@@ -183,19 +196,27 @@ class Segmented(QWidget):
         self.index = min(len(self.options) - 1, int(e.position().x() // (self.width() / len(self.options))))
         self.update()
 
+    def keyPressEvent(self, e):
+        step = {Qt.Key_Left: -1, Qt.Key_Right: 1}.get(e.key())
+        if step is None:
+            return super().keyPressEvent(e)
+        self.index = max(0, min(len(self.options) - 1, self.index + step))
+        self.update()
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(28, 28, 30))
-        p.drawRoundedRect(QRectF(self.rect()), 7, 7)
+        p.setBrush(theme.CHIP_DARK)
+        p.drawRoundedRect(QRectF(self.rect()), theme.RADIUS_MD, theme.RADIUS_MD)
         w = (self.width() - 4) / len(self.options)
-        p.setBrush(QColor(72, 72, 76))
-        p.drawRoundedRect(QRectF(2 + self.index * w, 2, w, self.height() - 4), 6, 6)
+        p.setBrush(theme.PRIMARY)
+        p.drawRoundedRect(QRectF(2 + self.index * w, 2, w, self.height() - 4), theme.RADIUS_SM, theme.RADIUS_SM)
         p.setFont(theme.font(9))
         for i, text in enumerate(self.options):
-            p.setPen(QColor(255, 255, 255) if i == self.index else GREY)
+            p.setPen(theme.ON_ACCENT if i == self.index else GREY)
             p.drawText(QRectF(2 + i * w, 0, w, self.height()), Qt.AlignCenter, text)
+        _focus_ring(p, self, QRectF(self.rect()).adjusted(1, 1, -1, -1), theme.RADIUS_MD)
 
 
 class PagesList(QWidget):
@@ -254,20 +275,24 @@ class SidebarItem(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing)
         if self.isChecked():
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(52, 52, 56))
-            p.drawRoundedRect(QRectF(self.rect()).adjusted(2, 0, -2, 0), 8, 8)
+            p.setBrush(theme.CHIP)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(2, 0, -2, 0), theme.RADIUS_MD, theme.RADIUS_MD)
+            p.setBrush(theme.PRIMARY)
+            p.drawRect(QRectF(2, 6, 2, self.height() - 12))  # neon marker on the open section
         tile = QRectF(10, 5, 22, 22)
-        p.setPen(Qt.NoPen)
-        p.setBrush(self.color)
-        p.drawRoundedRect(tile, 6, 6)
+        p.setPen(QPen(theme.alpha(self.color, 140), 1))
+        p.setBrush(theme.CHIP_DARK)
+        p.drawRoundedRect(tile, theme.RADIUS_SM, theme.RADIUS_SM)
         icon = QFont()
-        icon.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets"])
+        icon.setFamilies([theme.ICONS, "Segoe MDL2 Assets"])
         icon.setPixelSize(13)
         p.setFont(icon)
-        p.setPen(QColor(255, 255, 255))
+        p.setPen(self.color)
         p.drawText(tile, Qt.AlignCenter, self.glyph)
         p.setFont(theme.font(10))
+        p.setPen(theme.TEXT if self.isChecked() else theme.TEXT_MUTED)
         p.drawText(QRectF(42, 0, self.width() - 46, self.height()), Qt.AlignVCenter | Qt.AlignLeft, self.name)
+        _focus_ring(p, self, QRectF(self.rect()).adjusted(3, 1, -3, -1), theme.RADIUS_MD)
 
 
 class RoundButton(QAbstractButton):
@@ -276,16 +301,17 @@ class RoundButton(QAbstractButton):
     def __init__(self, text):
         super().__init__()
         self.setText(text)
-        self.setFixedSize(22, 22)
+        self.setFixedSize(26, 26)  # 20 px button plus room for the focus ring
         self.setCursor(Qt.PointingHandCursor)
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(72, 72, 76) if not self.isDown() else QColor(99, 99, 104))
-        p.drawEllipse(QRectF(1, 1, 20, 20))
-        p.setPen(QColor(255, 255, 255))
+        p.setPen(QPen(theme.alpha(theme.PRIMARY, 90), 1))
+        p.setBrush(theme.alpha(theme.PRIMARY, 60) if self.isDown() else theme.CHIP)  # pressed: neon tint
+        p.drawRoundedRect(QRectF(3, 3, 20, 20), theme.RADIUS_SM, theme.RADIUS_SM)
+        _focus_ring(p, self, QRectF(1, 1, 24, 24), theme.RADIUS_MD)
+        p.setPen(theme.TEXT)
         p.setFont(theme.font(9 if len(self.text()) == 1 and self.text() in "+−" else 6, QFont.Bold))
         p.drawText(QRectF(self.rect()), Qt.AlignCenter, self.text())
 
@@ -365,25 +391,25 @@ class SettingsWindow(QWidget):
         self.buttons = group
 
         open_card = {}
-        for section, grp, file, key, kind, default, title, subtitle, options in FIELDS:
-            col = cards[section]
+        for sec, grp, file, key, kind, default, title, subtitle, options in FIELDS:  # not `section`: that's the one to open
+            col = cards[sec]
             if kind == "pages":
                 w = PagesList()
                 w.setText(values[S].get("pages", DEFAULT_PAGES))
                 col.addWidget(w)
                 self.widgets[key] = w
                 continue
-            if (section, grp) not in open_card:
+            if (sec, grp) not in open_card:
                 label = QLabel(grp)
                 label.setObjectName("group")
                 col.addWidget(label)
-                open_card[(section, grp)] = _card()
-                col.addWidget(open_card[(section, grp)])
+                open_card[(sec, grp)] = _card()
+                col.addWidget(open_card[(sec, grp)])
             w = self._make(kind, options, default)
             if kind != "info":
                 self._load(w, kind, key, default, values.get(file, {}))
             self.widgets[key] = w
-            _add_row(open_card[(section, grp)], title, subtitle, [w])
+            _add_row(open_card[(sec, grp)], title, subtitle, [w])
         for col in cards.values():
             col.addStretch()
         self.widgets["autostart"].setChecked(self._autostart_was)
@@ -411,14 +437,17 @@ class SettingsWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         shape = QPainterPath()
-        shape.addRoundedRect(QRectF(self.rect()), 12, 12)
-        p.fillPath(shape, QColor(BG))
+        shape.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), theme.RADIUS_LG, theme.RADIUS_LG)
+        p.fillPath(shape, theme.SURFACE)
         p.save()
         p.setClipPath(shape)
-        p.fillRect(QRectF(0, 0, 194, self.height()), QColor(SIDEBAR))
+        p.fillRect(QRectF(0, 0, 194, self.height()), theme.SURFACE_2)
         p.restore()
+        p.setPen(QPen(theme.alpha(theme.PRIMARY, 140), 1))  # neon frame
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(shape)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(255, 95, 87))
+        p.setBrush(theme.DANGER)
         p.drawEllipse(QPointF(20, 18), 6, 6)
 
     def mousePressEvent(self, e):

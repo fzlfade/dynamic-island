@@ -99,14 +99,14 @@ class AskPage(Page):
 
     def draw(self, p, r, island):
         if self.state == "idle":
-            island._text(p, QRectF(r.left(), r.top() + 44, r.width(), r.height() - 60), "Press Ctrl+Alt+Space to ask Claude", 11, QColor(140, 140, 140), Qt.AlignCenter)
+            island._text(p, QRectF(r.left(), r.top() + 44, r.width(), r.height() - 60), "Press Ctrl+Alt+Space to ask Claude", 11, theme.TEXT_MUTED, Qt.AlignCenter)
             return
         island._text(p, QRectF(r.left() + 37, r.top() + 52, r.width() - 74, 20), self.question, 10,
-                     QColor(150, 150, 155), Qt.AlignLeft)
+                     theme.TEXT_MUTED, Qt.AlignLeft)
         box = QRectF(r.left() + 37, r.top() + 74, r.width() - 74, r.height() - 96)
         self.shown = self._tail_that_fits(self.text or "…", box)
         p.setFont(self.FONT)
-        p.setPen(QColor(255, 120, 110) if self.state == "error" else QColor(255, 255, 255))
+        p.setPen(theme.DANGER if self.state == "error" else theme.TEXT)
         p.drawText(box, Qt.AlignLeft | Qt.AlignBottom | Qt.TextWordWrap, self.shown)
 
     def _tail_that_fits(self, text, box):

@@ -141,3 +141,19 @@ def test_water_page_opens_the_water_section(island):
         assert win.stack.currentIndex() == win.section_index["Water"]
     finally:
         win.close()
+
+
+def test_segmented_works_from_the_keyboard(qapp):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    seg = settings.Segmented(["Hover", "Click"])
+    assert seg.focusPolicy() == Qt.StrongFocus, "Tab reaches it"
+    seg.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier))
+    assert seg.currentText() == "Click"
+    seg.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Left, Qt.NoModifier))
+    assert seg.currentText() == "Hover"
+
+
+def test_opens_on_the_section_asked_for(island):
+    w = settings.SettingsWindow(island, "Appearance")
+    assert w.stack.currentIndex() == w.section_index["Appearance"], "the island's gear and tray links open a section"

@@ -810,7 +810,8 @@ class Island(QWidget):
         self._tween(self.wide_anim, self.wide_v, 1.0 if getattr(self.pages[self.page], "lyrics_view", False) else 0.0)
         r = self._island_rect()
         path = notch_path(r, EAR * max(0.0, min(self.expand, 1.0)), min(CORNER, r.height() / 2, r.width() / 2))
-        p.fillPath(path, QColor(0, 0, 0))
+        p.fillPath(path, theme.ISLAND)
+        self._draw_neon(p, path, r)
         self.buttons = {}
         self.page_hits = {}
         if self._hud_active() and self.expand < 0.5:
@@ -819,6 +820,7 @@ class Island(QWidget):
         if self.expand >= 0.5:
             fade = min((self.expand - 0.5) * 2, 1.0)
             self._glow(p, path, r, fade * self.wide_v)
+            self._draw_scanlines(p, path, r, fade)
             p.setOpacity(fade * (1 - self.wide_v))  # the lyrics view has no header, dots or arrows
             self._draw_header(p, r)
             p.setOpacity(fade)
@@ -829,9 +831,34 @@ class Island(QWidget):
                 self.page_hits = {}
         elif not self.info:
             if r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
-                self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
+                self._text(p, QRectF(r), self._compact_label() or "No media", 11, theme.TEXT_MUTED, Qt.AlignCenter)
         else:
             self._draw_compact(p, r, 1 - self.expand * 2, path)
+
+    @staticmethod
+    def _draw_neon(p, path, r):
+        """Cyberpunk neon hairline round the island (a soft wide pass, then a crisp one); skips the 4 px pill."""
+        if r.height() < 12:
+            return
+        p.save()
+        p.setClipRect(QRectF(0, 1.5, WIN_W, WIN_H))  # no line along the screen's top edge
+        p.setBrush(Qt.NoBrush)
+        for width, a in ((4.0, 40), (1.0, 255 * theme.EDGE_ALPHA)):
+            p.setPen(QPen(theme.alpha(theme.PRIMARY, a), width))
+            p.drawPath(path)
+        p.restore()
+
+    @staticmethod
+    def _draw_scanlines(p, path, r, strength):
+        """Faint static CRT lines behind the open island's content (no motion, so nothing to reduce)."""
+        p.save()
+        p.setClipPath(path)
+        p.setPen(QPen(theme.alpha(theme.PRIMARY, theme.SCANLINE_ALPHA * strength), 1))
+        y = r.top() + 2.5
+        while y < r.bottom():
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y))
+            y += 3
+        p.restore()
 
     def _glow(self, p, path, r, strength):
         """Nusa's album-coloured glow rising from the bottom of the island."""
@@ -856,12 +883,12 @@ class Island(QWidget):
         p.setOpacity(alpha)
         art = QRectF(r.left() + 10, r.top() + 6, 22, 22)
         if lyric:  # Nusa swaps the cover for a note while it sings along
-            self._text(p, art, "\u266A", 15, QColor(150, 150, 155), Qt.AlignCenter)
+            self._text(p, art, "\u266A", 15, theme.TEXT_MUTED, Qt.AlignCenter)
         else:
-            self._draw_art(p, art, 6)
+            self._draw_art(p, art, theme.RADIUS_MD)
             self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
         lyric_box = QRectF(r.left() + 42, r.top(), r.width() - 88, r.height())
-        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter, bold=lyric,
+        self._text(p, lyric_box, self._compact_label(), 10, theme.TEXT, Qt.AlignCenter, bold=lyric,
                    scroll=bool(self.info.get("playing")))
 
     def _draw_dots(self, p, r):
@@ -884,8 +911,8 @@ class Island(QWidget):
         x = r.center().x() - (sum(widths) + gap * (n - 1)) / 2
         p.setPen(Qt.NoPen)
         for i, w in enumerate(widths):
-            p.setBrush(QColor(255, 255, 255) if weight[i] > 0.5 else QColor(105, 105, 110))
-            p.drawRoundedRect(QRectF(x, cy - 2, w, 4), 2, 2)
+            p.setBrush(theme.PRIMARY if weight[i] > 0.5 else theme.TEXT_DIM)
+            p.drawRoundedRect(QRectF(x, cy - 2, w, 4), theme.RADIUS_SM, theme.RADIUS_SM)
             hit_w = max(w + gap, 14.0)  # tiny dots, comfortable click target
             if self.bar_v < 0.5:
                 self.page_hits[i] = QRectF(x + w / 2 - hit_w / 2, cy - 9, hit_w, 18)
@@ -894,7 +921,7 @@ class Island(QWidget):
         mid = r.top() + 107
         for key, cx, glyph in (("prev", r.left() + 11, "\u2039"), ("next", r.right() - 12, "\u203a")):
             self.page_hits[key] = QRectF(cx - 12, mid - 20, 24, 40)
-            self._text(p, QRectF(cx - 7, mid - 11, 14, 22), glyph, 13, QColor(95, 95, 100), Qt.AlignCenter)
+            self._text(p, QRectF(cx - 7, mid - 11, 14, 22), glyph, 13, theme.TEXT_DIM, Qt.AlignCenter)
 
     def _draw_icons_bar(self, p, r):
         """Nusa's page icons: shown while the pointer is on the dots; click one to jump, the gear opens settings."""
@@ -904,23 +931,27 @@ class Island(QWidget):
         p.save()
         p.setOpacity(p.opacity() * self.bar_v)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(28, 28, 30))
-        p.drawRoundedRect(bar, 14, 14)
+        p.setBrush(theme.CHIP_DARK)
+        p.drawRoundedRect(bar, theme.RADIUS_MD, theme.RADIUS_MD)
+        p.setPen(QPen(theme.alpha(theme.PRIMARY, 90), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(bar, theme.RADIUS_MD, theme.RADIUS_MD)
+        p.setPen(Qt.NoPen)
         x = bar.left() + 6
         for i, page in enumerate(self.pages):
             cellr = QRectF(x, bar.top(), cell, bar.height())
-            current = QColor(255, 55, 95) if i == self.page else QColor(210, 210, 214)
+            current = theme.PRIMARY if i == self.page else theme.TEXT_MUTED
             p.setFont(self._icon_font(16))
             p.setPen(current)
             p.drawText(cellr, Qt.AlignCenter, getattr(page, "icon", "\uE8FD"))
             if self.bar_v >= 0.5:
                 self.page_hits[i] = cellr
             x += cell
-        p.setPen(QPen(QColor(70, 70, 74), 1))
+        p.setPen(QPen(theme.LINE, 1))
         p.drawLine(QPointF(x + sep / 2, bar.top() + 6), QPointF(x + sep / 2, bar.bottom() - 6))
         gear = QRectF(x + sep, bar.top(), cell, bar.height())
         p.setFont(self._icon_font(16))
-        p.setPen(QColor(210, 210, 214))
+        p.setPen(theme.TEXT_MUTED)
         p.drawText(gear, Qt.AlignCenter, "\uE713")
         if self.bar_v >= 0.5:
             self.page_hits["gear"] = gear
@@ -930,7 +961,7 @@ class Island(QWidget):
         """Page title at the top left; pages that put something else there (Media's cover) set hide_title."""
         if getattr(page, "hide_title", False):
             return
-        parts = getattr(page, "title_parts", None) or ([(page.title, QColor(255, 255, 255))] if page.title else [])
+        parts = getattr(page, "title_parts", None) or ([(page.title, theme.TEXT)] if page.title else [])
         x = r.left() + 37
         for text, color in parts:
             w = QFontMetrics(theme.font(12, QFont.Bold)).horizontalAdvance(text)
@@ -951,22 +982,22 @@ class Island(QWidget):
             self._draw_ring(p, QPointF(x + 10, cy))
             x += 29
         if self.show_clock:
-            self._text(p, QRectF(x, cy - 11, date_w + 2, 22), date_s, 11, QColor(255, 255, 255), Qt.AlignLeft)
-            self._text(p, QRectF(x + date_w + 9, cy - 11, time_w + 2, 22), time_s, 11, QColor(255, 255, 255),
+            self._text(p, QRectF(x, cy - 11, date_w + 2, 22), date_s, 11, theme.TEXT, Qt.AlignLeft)
+            self._text(p, QRectF(x + date_w + 9, cy - 11, time_w + 2, 22), time_s, 11, theme.TEXT,
                        Qt.AlignLeft, bold=True)
         icon = getattr(self.pages[self.page], "status_icon", None)
         at = QPointF(r.right() - 45, cy)
         if icon == "wave" and self.info.get("playing"):  # Nusa drops the waveform when nothing plays
             t = time.monotonic()
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255))
+            p.setBrush(theme.TEXT)
             for i in range(5):
                 h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 6 + i * 1.3)) if self.info.get("playing") else 4 + (i % 2) * 4
                 p.drawRoundedRect(QRectF(at.x() - 10 + i * 4.5, at.y() - h / 2, 2.2, h), 1.1, 1.1)
         elif icon == "bell":
-            bell(p, at, QColor(255, 255, 255))
+            bell(p, at, theme.TEXT)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 69, 58))
+            p.setBrush(theme.DANGER)
             p.drawEllipse(QPointF(at.x() + 7, at.y() - 7), 2.5, 2.5)
 
     def _draw_ring(self, p, c):
@@ -974,13 +1005,13 @@ class Island(QWidget):
         ac, pct, _ = self.battery
         box = QRectF(c.x() - 8.5, c.y() - 8.5, 17, 17)
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QColor(48, 209, 88, 70), 3))
+        p.setPen(QPen(theme.alpha(theme.SUCCESS, 70), 3))
         p.drawEllipse(box)
-        p.setPen(QPen(QColor(48, 209, 88) if pct > 20 or ac else QColor(255, 69, 58), 3, Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(theme.SUCCESS if pct > 20 or ac else theme.DANGER, 3, Qt.SolidLine, Qt.RoundCap))
         p.drawArc(box, 90 * 16, -int(pct / 100 * 360 * 16))
         if ac:
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255))
+            p.setBrush(theme.TEXT)
             p.drawPolygon([QPointF(c.x() + 1, c.y() - 5), QPointF(c.x() - 2.5, c.y() + 1), QPointF(c.x() - 0.2, c.y() + 1),
                            QPointF(c.x() - 1, c.y() + 5), QPointF(c.x() + 2.5, c.y() - 1), QPointF(c.x() + 0.2, c.y() - 1)])
 
@@ -988,7 +1019,7 @@ class Island(QWidget):
         clip = QPainterPath()
         clip.addRoundedRect(rect, radius, radius)
         if self.art.isNull():
-            p.fillPath(clip, QColor(50, 50, 55))
+            p.fillPath(clip, theme.CHIP)
             return
         p.save()
         p.setClipPath(clip)
@@ -1000,39 +1031,39 @@ class Island(QWidget):
         t = time.monotonic()
         for i in range(4):
             h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 7 + i * 1.7)) if self.info.get("playing") else 4
-            p.fillRect(QRectF(at.x() + i * 6, at.y() - h / 2, 3, h), QColor(120, 220, 140))
+            p.fillRect(QRectF(at.x() + i * 6, at.y() - h / 2, 3, h), theme.PRIMARY)
 
     def _draw_battery(self, p, r):
         _, level, charging, ac, title, subtitle = self.hud
         low = not ac and level * 100 <= system.BATTERY_LOW
-        fill = QColor(120, 220, 140) if ac else QColor(255, 90, 80) if low else QColor(255, 255, 255)
+        fill = theme.SUCCESS if ac else theme.DANGER if low else theme.TEXT
         body = QRectF(r.left() + 22, r.center().y() - 8, 30, 16)
-        p.setPen(QPen(QColor(150, 150, 155), 1.5))
+        p.setPen(QPen(theme.TEXT_MUTED, 1.5))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(body, 4, 4)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(150, 150, 155))
+        p.setBrush(theme.TEXT_MUTED)
         p.drawRoundedRect(QRectF(body.right() + 1.5, body.center().y() - 3, 2.5, 6), 1, 1)  # terminal nub
         p.setBrush(fill)
         p.drawRoundedRect(QRectF(body.left() + 2.5, body.top() + 2.5, (body.width() - 5) * level, body.height() - 5), 2, 2)
         x = body.right() + 18
-        self._text(p, QRectF(x, r.top() + 12, r.right() - x - 70, 22), title, 11, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
-        self._text(p, QRectF(x, r.top() + 33, r.right() - x - 70, 18), subtitle, 9, QColor(160, 160, 160), Qt.AlignLeft)
+        self._text(p, QRectF(x, r.top() + 12, r.right() - x - 70, 22), title, 11, theme.TEXT, Qt.AlignLeft, bold=True)
+        self._text(p, QRectF(x, r.top() + 33, r.right() - x - 70, 18), subtitle, 9, theme.TEXT_MUTED, Qt.AlignLeft)
         self._text(p, QRectF(r.right() - 84, r.top(), 62, r.height()), f"{round(level * 100)}%", 15, fill, Qt.AlignRight, bold=True)
 
     def _draw_popup(self, p, r):
         _, glyph, title, subtitle = self.hud
         p.setFont(self._icon_font(22))
-        p.setPen(QColor(140, 140, 140) if title == "Disconnected" else QColor(255, 255, 255))  # grey Wi-Fi glyph offline
+        p.setPen(theme.TEXT_MUTED if title == "Disconnected" else theme.TEXT)  # grey Wi-Fi glyph offline
         p.drawText(QRectF(r.left() + 18,r.top(), 38, r.height()), Qt.AlignCenter, glyph)
         x = r.left() + 70  # same text column as the battery popup
-        self._text(p, QRectF(x, r.top() + 12, r.right() - x - 22, 22), title, 11, QColor(255, 255, 255), Qt.AlignLeft, bold=True)
-        self._text(p, QRectF(x, r.top() + 33, r.right() - x - 22, 18), subtitle, 9, QColor(160, 160, 160), Qt.AlignLeft)
+        self._text(p, QRectF(x, r.top() + 12, r.right() - x - 22, 22), title, 11, theme.TEXT, Qt.AlignLeft, bold=True)
+        self._text(p, QRectF(x, r.top() + 33, r.right() - x - 22, 18), subtitle, 9, theme.TEXT_MUTED, Qt.AlignLeft)
 
     @staticmethod
     def _icon_font(px):
         font = QFont()
-        font.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol"])
+        font.setFamilies([theme.ICONS, "Segoe MDL2 Assets", "Segoe UI Symbol"])
         font.setPixelSize(px)
         font.setStyleStrategy(QFont.NoSubpixelAntialias)  # no ClearType colour fringes on the transparent window
         return font
@@ -1055,27 +1086,27 @@ class Island(QWidget):
         else:
             glyph = "" if muted else ""[min(3, math.ceil(level * 3))]
         p.setFont(self._icon_font(16))
-        p.setPen(QColor(255, 255, 255))
+        p.setPen(theme.TEXT)
         p.drawText(QRectF(r.left() + 14, r.top(), 24, r.height()), Qt.AlignCenter, glyph)
         if kind == "language":
             display, tag = system.language_name(level)
-            self._text(p, QRectF(r.left() + 48, r.top(), r.width() - 130, r.height()), display, 10, QColor(255, 255, 255), Qt.AlignLeft)
-            self._text(p, QRectF(r.right() - 76, r.top(), 56, r.height()), tag, 10, QColor(120, 220, 140), Qt.AlignRight, bold=True)
+            self._text(p, QRectF(r.left() + 48, r.top(), r.width() - 130, r.height()), display, 10, theme.TEXT, Qt.AlignLeft)
+            self._text(p, QRectF(r.right() - 76, r.top(), 56, r.height()), tag, 10, theme.SUCCESS, Qt.AlignRight, bold=True)
             return
         if kind == "caps":
             on = level > 0
-            self._text(p, QRectF(r.left() + 48, r.top(), 120, r.height()), "Caps Lock", 10, QColor(255, 255, 255), Qt.AlignLeft)
+            self._text(p, QRectF(r.left() + 48, r.top(), 120, r.height()), "Caps Lock", 10, theme.TEXT, Qt.AlignLeft)
             self._text(p, QRectF(r.right() - 64, r.top(), 44, r.height()), "On" if on else "Off", 10,
-                       QColor(120, 220, 140) if on else QColor(140, 140, 140), Qt.AlignRight, bold=on)
+                       theme.SUCCESS if on else theme.TEXT_MUTED, Qt.AlignRight, bold=on)
             return
         track = QRectF(r.left() + 48, r.center().y() - 2, r.width() - 110, 4)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(70, 70, 75))
+        p.setBrush(theme.TRACK)
         p.drawRoundedRect(track, 2, 2)
-        p.setBrush(QColor(110, 110, 115) if muted else QColor(255, 255, 255))
+        p.setBrush(theme.TEXT_DIM if muted else theme.PRIMARY)
         p.drawRoundedRect(QRectF(track.left(), track.top(), track.width() * level, 4), 2, 2)
         self._text(p, QRectF(track.right() + 8, r.top(), 44, r.height()), f"{round(level * 100)}", 10,
-                   QColor(140, 140, 140) if muted else QColor(255, 255, 255), Qt.AlignRight)
+                   theme.TEXT_MUTED if muted else theme.TEXT, Qt.AlignRight)
 
     def _text(self, p, rect, s, size, color, align, bold=False, scroll=False):
         """One line of text; too long for `rect`: scrolls if `scroll` (repaints are running), else ends in "…"."""
@@ -1125,8 +1156,8 @@ def make_tray(parent):
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setBrush(QColor(0, 0, 0))
-    p.setPen(QColor(90, 90, 90))  # keeps the black pill visible on a dark taskbar
+    p.setBrush(theme.ISLAND)
+    p.setPen(theme.PRIMARY)  # keeps the black pill visible on a dark taskbar
     p.drawRoundedRect(QRectF(0.5, 4.5, 15, 7), 3.5, 3.5)
     p.end()
     tray = QSystemTrayIcon(QIcon(pm), parent)

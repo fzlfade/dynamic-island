@@ -5,6 +5,8 @@ from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
+from island import theme
+
 GLYPH = ""  # Copy
 HOTKEY_ID = 1
 
@@ -63,7 +65,7 @@ class RegionPicker(QWidget):
             p.setCompositionMode(QPainter.CompositionMode_Source)
             p.fillRect(sel, QColor(0, 0, 0, 1))  # looks clear; alpha 0 would let clicks fall through on Windows
             p.setCompositionMode(QPainter.CompositionMode_SourceOver)
-            p.setPen(QPen(QColor(255, 255, 255), 1))
+            p.setPen(QPen(theme.PRIMARY, 1))
             p.drawRect(sel)
 
     def mousePressEvent(self, e):
