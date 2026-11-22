@@ -64,8 +64,12 @@ class Media(QObject):
         self.lyrics = []
         self._lyrics_task = None  # strong ref: the loop only holds tasks weakly
         if autostart:  # tests drive _read() themselves
-            threading.Thread(target=self.loop.run_forever, daemon=True).start()
-            asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
+            self.start()
+
+    def start(self):
+        """Begin polling. Connect `changed` first: the first update is the only one carrying the cover."""
+        threading.Thread(target=self.loop.run_forever, daemon=True).start()
+        asyncio.run_coroutine_threadsafe(self._poll(), self.loop)
 
     async def _poll(self):
         manager = await SessionManager.request_async()

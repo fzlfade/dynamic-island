@@ -1146,7 +1146,9 @@ def make_tray(parent):
 
 def main():
     app = QApplication(sys.argv)
-    island = Island(Media())
+    media = Media(autostart=False)
+    island = Island(media)
+    media.start()  # after Island connected to it, or the first update (with the cover) is lost
     tray = make_tray(island)  # noqa: F841 (referenced so it is not collected)
     system.install_keys(island, system.Volume())
     system.install_brightness(island)
