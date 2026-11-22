@@ -29,8 +29,9 @@ def transparency_enabled():
         return True
 
 
+# 0.80: the most see-through that keeps every text colour at 4.5:1 over any backdrop (tested).
 # shortcut: read once at start-up; restart the island after changing Windows' transparency switch
-GLASS_OPACITY = 0.90 if transparency_enabled() else 1.0
+GLASS_OPACITY = 0.80 if transparency_enabled() else 1.0
 
 
 def alpha(color, a):
@@ -52,9 +53,9 @@ def hex_(color):
 
 # --- colour -------------------------------------------------------------------
 # Glass surfaces (alpha = translucency)
-ISLAND = _glass("#141418")  # the island's glass
-ISLAND_SOLID = QColor("#141418")  # places that must stay opaque: tray icon, cut-outs
-SURFACE = _glass("#1c1c22", max(GLASS_OPACITY, 0.92))  # settings window: denser, it holds long text
+ISLAND = _glass("#0c0c10")  # the island's glass
+ISLAND_SOLID = QColor("#0c0c10")  # places that must stay opaque: tray icon, cut-outs
+SURFACE = _glass("#0c0c10")  # settings window: the same glass
 SURFACE_2 = alpha(QColor("#ffffff"), 10)  # sidebar layer on the window glass
 CARD = alpha(QColor("#ffffff"), 14)  # grouped rows
 CHIP = alpha(QColor("#ffffff"), 22)  # tiles, chips, placeholder cover, round buttons
@@ -66,15 +67,15 @@ INPUT = alpha(QColor("#ffffff"), 20)  # text fields
 
 # Text and icons: tests check 4.5:1 (TEXT_DIM 3:1, marks only) on every glass layer over white, grey and black
 TEXT = QColor("#ffffff")
-TEXT_MUTED = QColor("#c4c4cc")
-TEXT_DIM = QColor("#a0a0aa")
+TEXT_MUTED = QColor("#d8d8e0")
+TEXT_DIM = QColor("#b4b4be")
 
 # Accents: light tints for text and marks on glass, deeper fills behind white text
-PRIMARY = QColor("#86c8ff")  # progress, current page, focus ring, links
-SECONDARY = QColor("#e4adff")  # Pomodoro, highlights
-SUCCESS = QColor("#5fe08c")  # charging, on, done
-WARNING = QColor("#ffd60a")
-DANGER = QColor("#ffaaa3")  # low battery, errors
+PRIMARY = QColor("#a8d8ff")  # progress, current page, focus ring, links
+SECONDARY = QColor("#eec6ff")  # Pomodoro, highlights
+SUCCESS = QColor("#8cf0b0")  # charging, on, done
+WARNING = QColor("#ffe066")
+DANGER = QColor("#ffc2bd")  # low battery, errors
 CLOSE = QColor("#ff5f57")  # the settings window's close dot
 PRIMARY_FILL = QColor("#0a66e0")  # filled buttons, selection, today
 SECONDARY_FILL = QColor("#8a3fd1")
