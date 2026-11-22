@@ -52,9 +52,10 @@ HUD_SECONDS = 1.5
 BATTERY_POPUP = (340.0, 64.0)
 BATTERY_SECONDS = 3.0
 EXPANDED = (455.0, 197.0)  # measured on Nusa 1.3.1
+LYRICS_EXPANDED = (600.0, 197.0)  # Nusa's lyrics view: player left, lyrics right (from a screenshot)
 EAR, CORNER = 22.0, 36.0
 BAR_EXTRA = 30.0  # the island grows this much while the page-icons bar shows  # concave flare where the notch meets the bezel; bottom corner radius
-WIN_W, WIN_H = 520, 240  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
+WIN_W, WIN_H = 660, 240  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
 NOTIFY_SECONDS = 4.0
 DEFAULT_PAGES = "media,focus,water,shelf,todo"
 NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
@@ -167,6 +168,10 @@ class Island(QWidget):
         self.bar_v = 0.0  # 0..1 page-icons bar, shown while the pointer is on the page dots
         self.bar_anim = QVariantAnimation(self, duration=180, easingCurve=QEasingCurve.OutCubic)
         self.bar_anim.valueChanged.connect(self._set_bar)
+        self.wide_v = 0.0  # 0..1 widening into the lyrics view
+        self.wide_anim = QVariantAnimation(self, duration=300, easingCurve=QEasingCurve.OutCubic)
+        self.wide_anim.valueChanged.connect(self._set_wide)
+        self.art_color = None  # the cover's average colour, for the glow
         self.peek = 0.0  # 0..1 swell of the closed pill while the pointer rests on it
         self.peek_anim = QVariantAnimation(self, duration=120, easingCurve=QEasingCurve.OutCubic)
         self.peek_anim.valueChanged.connect(self._set_peek)
@@ -239,6 +244,10 @@ class Island(QWidget):
         if "thumb" in info:
             self.art = QPixmap()
             self.art.loadFromData(info.pop("thumb"))
+            self.art_color = None
+            if not self.art.isNull():  # a 1x1 smooth scale averages the cover; lift dark covers so the glow reads
+                c = self.art.toImage().scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).pixelColor(0, 0)
+                self.art_color = QColor.fromHsvF(max(c.hsvHueF(), 0.0), c.hsvSaturationF() * 0.75, max(c.valueF(), 0.6))
         self.info = info
         self._update_frame()
         self.update()
@@ -560,14 +569,22 @@ class Island(QWidget):
         self.update()
 
     def _bar_to(self, target):
-        if self.bar_anim.endValue() == target and self.bar_anim.state() == self.bar_anim.State.Running:
+        self._tween(self.bar_anim, self.bar_v, target)
+
+    def _set_wide(self, v):
+        self.wide_v = v
+        self.update()
+
+    @staticmethod
+    def _tween(anim, value, target):
+        if anim.endValue() == target and anim.state() == anim.State.Running:
             return
-        if abs(self.bar_v - target) < 1e-3:
+        if abs(value - target) < 1e-3:
             return
-        self.bar_anim.stop()
-        self.bar_anim.setStartValue(self.bar_v)
-        self.bar_anim.setEndValue(target)
-        self.bar_anim.start()
+        anim.stop()
+        anim.setStartValue(value)
+        anim.setEndValue(target)
+        anim.start()
 
     def read_volume(self):
         try:
@@ -628,7 +645,8 @@ class Island(QWidget):
         else:
             cw, ch = COLLAPSED_LYRICS if self.info.get("lyrics") else COLLAPSED_PLAYING
         cw, ch = cw + (PEEK[0] - MINIMAL[0]) * self.peek, ch + (PEEK[1] - MINIMAL[1]) * self.peek
-        w, h = lerp(cw, EXPANDED[0], self.expand), max(0.0, lerp(ch, EXPANDED[1], self.expand))
+        ew = lerp(EXPANDED[0], LYRICS_EXPANDED[0], self.wide_v)
+        w, h = lerp(cw, ew, self.expand), max(0.0, lerp(ch, EXPANDED[1], self.expand))
         h += BAR_EXTRA * self.bar_v * max(0.0, min(self.expand, 1.0))  # Nusa grows to fit the page-icons bar
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
@@ -689,7 +707,7 @@ class Island(QWidget):
                 self.update()
                 return
             r = self._island_rect()
-            on_dots = (e.position().y() >= r.bottom() - 24 - BAR_EXTRA * self.bar_v
+            on_dots = self.wide_v < 0.5 and (e.position().y() >= r.bottom() - 24 - BAR_EXTRA * self.bar_v
                        and abs(e.position().x() - r.center().x()) < 130)
             self._bar_to(1.0 if on_dots and self.on("page_icons") else 0.0)
             self.update()
@@ -769,6 +787,7 @@ class Island(QWidget):
         self.update()
 
     def _draw_pages(self, p, r, clip):
+        r = QRectF(r.center().x() - EXPANDED[0] / 2, r.top(), EXPANDED[0], r.height())  # Media widens itself
         if self.page_from is None or self.slide >= 1.0:
             self._draw_title(p, r, self.pages[self.page])
             self.pages[self.page].draw(p, r, self)
@@ -788,6 +807,7 @@ class Island(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        self._tween(self.wide_anim, self.wide_v, 1.0 if getattr(self.pages[self.page], "lyrics_view", False) else 0.0)
         r = self._island_rect()
         path = notch_path(r, EAR * max(0.0, min(self.expand, 1.0)), min(CORNER, r.height() / 2, r.width() / 2))
         p.fillPath(path, QColor(0, 0, 0))
@@ -797,22 +817,51 @@ class Island(QWidget):
             self._draw_hud(p, r)
             return
         if self.expand >= 0.5:
-            p.setOpacity(min((self.expand - 0.5) * 2, 1.0))
+            fade = min((self.expand - 0.5) * 2, 1.0)
+            self._glow(p, path, r, fade * self.wide_v)
+            p.setOpacity(fade * (1 - self.wide_v))  # the lyrics view has no header, dots or arrows
             self._draw_header(p, r)
+            p.setOpacity(fade)
             self._draw_pages(p, r, path)
+            p.setOpacity(fade * (1 - self.wide_v))
             self._draw_dots(p, r)
+            if self.wide_v >= 0.5:
+                self.page_hits = {}
         elif not self.info:
             if r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
                 self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
         else:
-            self._draw_compact(p, r, 1 - self.expand * 2)
+            self._draw_compact(p, r, 1 - self.expand * 2, path)
 
-    def _draw_compact(self, p, r, alpha):
+    def _glow(self, p, path, r, strength):
+        """Nusa's album-coloured glow rising from the bottom of the island."""
+        if strength <= 0.01 or self.art_color is None:
+            return
+        grad = QLinearGradient(0, r.bottom(), 0, r.top() + r.height() * 0.45)
+        c = QColor(self.art_color)
+        c.setAlphaF(0.7 * strength)
+        grad.setColorAt(0, c)
+        c.setAlphaF(0.0)
+        grad.setColorAt(1, c)
+        p.fillPath(path, grad)
+
+    def _lyric_pill(self):
+        """The collapsed island is showing the current lyric line (no page claims the pill)."""
+        return bool(self.info.get("lyrics")) and self.on("lyrics") and all(pg.compact_text() is None for pg in self.pages)
+
+    def _draw_compact(self, p, r, alpha, path):
+        lyric = self._lyric_pill()
+        if lyric:
+            self._glow(p, path, r, alpha)
         p.setOpacity(alpha)
-        self._draw_art(p, QRectF(r.left() + 10, r.top() + 6, 22, 22), 6)
-        self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
+        art = QRectF(r.left() + 10, r.top() + 6, 22, 22)
+        if lyric:  # Nusa swaps the cover for a note while it sings along
+            self._text(p, art, "\u266A", 15, QColor(150, 150, 155), Qt.AlignCenter)
+        else:
+            self._draw_art(p, art, 6)
+            self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
         lyric_box = QRectF(r.left() + 42, r.top(), r.width() - 88, r.height())
-        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter,
+        self._text(p, lyric_box, self._compact_label(), 10, QColor(255, 255, 255), Qt.AlignCenter, bold=lyric,
                    scroll=bool(self.info.get("playing")))
 
     def _draw_dots(self, p, r):

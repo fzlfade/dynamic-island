@@ -1,5 +1,6 @@
 """Expanded-island pages, laid out like Nusa 1.3.1 (measured on a 455×197 island; positions are offsets from its
 top-left). The island draws the fixed header row (ring, date, time, status icon) above every page."""
+import bisect
 import time
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -122,7 +123,7 @@ class MediaPage(Page):
     SLIDER_W = 68.0
 
     def __init__(self):
-        self.lyrics_on = True  # the bubble button: lyric line in place of the artist
+        self.lyrics_view = False  # the bubble button: Nusa's wide view with synced lyrics on the right
         self.muted = False
         self.level = None  # volume 0..1, read when the slider is revealed (a COM call: not on every frame)
 
@@ -131,19 +132,97 @@ class MediaPage(Page):
         return QRectF(r.left() + 322, cy - 10, self.SLIDER_W, 20)
 
     def draw(self, p, r, island):
+        """Crossfades the player and the lyrics view as the island widens; only the main one keeps buttons."""
+        w = island.wide_v
+        full = QRectF(r.center().x() - island._island_rect().width() / 2, r.top(), island._island_rect().width(),
+                      r.height())
+        for view, rect, alpha in ((self._draw_player, r, 1 - w), (self._draw_lyrics_view, full, w)):
+            if alpha <= 0.01:
+                continue
+            keep = dict(island.buttons) if alpha < 0.5 else None
+            p.save()
+            p.setOpacity(p.opacity() * alpha)
+            view(p, rect, island)
+            p.restore()
+            if keep is not None:
+                island.buttons = keep
+
+    @staticmethod
+    def _cover(p, island, art, info):
+        if info.get("title"):
+            island._draw_art(p, art, 12)
+            return info["title"]
+        p.setPen(Qt.NoPen)  # Nusa keeps the whole player with a placeholder tile
+        p.setBrush(CHIP)
+        p.drawRoundedRect(art, 12, 12)
+        glyph(p, island, art, "\uE8D6", 28, QColor(160, 160, 165))
+        return "Not Playing"
+
+    def _draw_lyrics_view(self, p, r, island):
+        """Nusa's lyrics view: a compact player on the left, the synced lines scrolling on the right."""
+        L, T = r.left(), r.top()
+        info = island.info or {}
+        playing = bool(info.get("playing"))
+        title = self._cover(p, island, QRectF(L + 22, T + 27, 73, 73), info)
+        island._text(p, QRectF(L + 113, T + 40, 162, 24), title, 12, WHITE, Qt.AlignLeft, bold=True, scroll=playing)
+        island._text(p, QRectF(L + 113, T + 62, 162, 18), info.get("artist", ""), 9, GREY, Qt.AlignLeft, scroll=playing)
+        dur = info.get("duration") or 0.0
+        pos = min(island._pos(), dur) if dur and info else 0.0
+        island._text(p, QRectF(L + 26, T + 114, 56, 22), mmss(pos), 13, WHITE, Qt.AlignLeft)
+        bar(p, QRectF(L + 86, T + 122, 124, 4), pos / dur if dur else 0.0)
+        island._text(p, QRectF(L + 212, T + 114, 60, 22), "-" + mmss(dur - pos), 13, WHITE, Qt.AlignRight)
+        cy = T + 157
+        island.buttons["lyrics"] = QRectF(L + 46, cy - 14, 28, 28)
+        glyph(p, island, island.buttons["lyrics"], "\uE8BD", 17, WHITE)
+        for action, cx in (("prev", L + 104), ("toggle", L + 148), ("next", L + 193)):
+            island.buttons[action] = QRectF(cx - 20, cy - 16, 40, 32)
+            self._draw_icon(p, island, action, QPointF(cx, cy))
+        p.setPen(QPen(QColor(255, 255, 255, 30), 1))
+        p.drawLine(QPointF(L + 288, T + 40), QPointF(L + 288, T + 170))
+        self._draw_lines(p, QRectF(L + 302, T + 22, r.width() - 302 - 50, r.height() - 34), island)
+
+    @staticmethod
+    def _draw_lines(p, box, island):
+        lyrics = (island.info or {}).get("lyrics") if island.on("lyrics") else None
+        if not lyrics:
+            island._text(p, box, "Lyrics are off" if not island.on("lyrics") else "No synced lyrics", 11, GREY,
+                         Qt.AlignCenter)
+            return
+        pos = island._pos()
+        i = bisect.bisect_right(lyrics, pos, key=lambda l: l[0]) - 1
+        font = theme.font(12, QFont.Bold)
+        fm = QFontMetrics(font)
+        wrap = lambda k: lyrics[k][1]  # Nusa leaves instrumental gaps blank
+        height = lambda k: fm.boundingRect(box.toRect().adjusted(0, 0, 0, 1000), Qt.TextWordWrap, wrap(k) or "x").height()
+        gap = 14.0
+        t = min(1.0, max(0.0, (pos - lyrics[i][0]) / 0.35)) if i >= 0 else 1.0
+        ease = 1 - (1 - t) ** 3  # the new line glides up into place
+        cur = max(i, 0)
+        y = box.top() + 42 + ((height(i - 1) + gap) * (1 - ease) if i >= 1 else 0)
+        k = cur - 1
+        ky = y
+        while k >= 0 and ky > box.top():  # earlier lines above, fading out of the top
+            ky -= height(k) + gap
+            k -= 1
+        k += 1
+        p.save()
+        p.setClipRect(box, Qt.IntersectClip)
+        p.setFont(font)
+        while k < len(lyrics) and ky < box.bottom():
+            h = height(k)
+            dim = int(70 * (1 - ease)) if k < i else 70  # the line just sung fades out as it rises
+            p.setPen(QColor(255, 255, 255) if k == i else QColor(255, 255, 255, dim))
+            p.drawText(QRectF(box.left(), ky, box.width(), h), Qt.AlignLeft | Qt.TextWordWrap, wrap(k))
+            ky += h + gap
+            k += 1
+        p.restore()
+
+    def _draw_player(self, p, r, island):
         L, T = r.left(), r.top()
         info = island.info or {}
         playing = bool(info.get("playing"))
         art = QRectF(L + 37, T + 28, 71, 70)
-        if info.get("title"):
-            island._draw_art(p, art, 12)
-            title = info["title"]
-        else:  # Nusa keeps the whole player with a placeholder tile
-            p.setPen(Qt.NoPen)
-            p.setBrush(CHIP)
-            p.drawRoundedRect(art, 12, 12)
-            glyph(p, island, art, "\uE8D6", 28, QColor(160, 160, 165))
-            title = "Not Playing"
+        title = self._cover(p, island, art, info)
         n = info.get("sessions", 0)
         if n > 1:  # one dot per media source; the current one is white
             x0 = art.center().x() - (n - 1) * 3.5
@@ -155,9 +234,7 @@ class MediaPage(Page):
                 p.drawEllipse(c, 1.8, 1.8)
         x, w = L + 126, r.right() - 37 - (L + 126)
         island._text(p, QRectF(x, T + 49, w, 24), title, 12, WHITE, Qt.AlignLeft, bold=True, scroll=playing)
-        lyric = island._lyric() if self.lyrics_on else ""
-        island._text(p, QRectF(x, T + 71, w, 18), lyric or info.get("artist", ""), 9, GREEN if lyric else GREY,
-                     Qt.AlignLeft, scroll=playing)
+        island._text(p, QRectF(x, T + 71, w, 18), info.get("artist", ""), 9, GREY, Qt.AlignLeft, scroll=playing)
         dur = info.get("duration") or 0.0
         pos = min(island._pos(), dur) if dur and info else 0.0
         island._text(p, QRectF(L + 37, T + 112, 60, 22), mmss(pos), 13, WHITE, Qt.AlignLeft)
@@ -165,7 +242,7 @@ class MediaPage(Page):
         island._text(p, QRectF(L + 352, T + 112, 66, 22), "-" + mmss(dur - pos), 13, WHITE, Qt.AlignRight)
         cy = T + 157
         island.buttons["lyrics"] = QRectF(L + 58, cy - 14, 28, 28)
-        glyph(p, island, island.buttons["lyrics"], "\uE8BD", 17, WHITE if self.lyrics_on else GREY)
+        glyph(p, island, island.buttons["lyrics"], "\uE8BD", 17, WHITE)
         for action, cx in (("prev", L + 173), ("toggle", L + 228), ("next", L + 281)):
             island.buttons[action] = QRectF(cx - 20, cy - 16, 40, 32)
             self._draw_icon(p, island, action, QPointF(cx, cy))
@@ -199,7 +276,8 @@ class MediaPage(Page):
             elif action.startswith("src"):
                 getattr(island.media, "select", lambda n: None)(int(action[3:]))
             elif action == "lyrics":
-                self.lyrics_on = not self.lyrics_on
+                self.lyrics_view = not self.lyrics_view
+                island.update()
             elif action == "volume":
                 try:
                     self.muted = island.volume.toggle_mute()[1]

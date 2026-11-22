@@ -144,3 +144,53 @@ def test_volume_slider_appears_on_hover_and_sets_level(island, monkeypatch):
 
 def test_window_fits_the_island_with_the_icons_bar():
     assert app.WIN_H >= app.EXPANDED[1] + app.BAR_EXTRA, "otherwise the bar is clipped"
+
+
+LRC3 = [(0.0, "first line"), (10.0, "second line"), (20.0, "third line")]
+
+
+def _red_song(island):
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage, QColor
+    img = QImage(8, 8, QImage.Format_RGB32)
+    img.fill(QColor(200, 30, 30))
+    buf = QBuffer()
+    buf.open(QIODevice.WriteOnly)
+    img.save(buf, "PNG")
+    island._on_media({"title": "Song", "artist": "Artist", "playing": False, "pos": 11.0, "pos_at": 0,
+                      "duration": 100.0, "lyrics": LRC3, "thumb": bytes(buf.data())})
+
+
+def test_album_colour_is_taken_from_the_art(island):
+    _red_song(island)
+    c = island.art_color
+    assert c.red() > 150 and c.green() < 80, "the glow takes the cover's colour"
+
+
+def test_lyrics_button_opens_the_wide_lyrics_view(island):
+    _red_song(island)
+    island._set_expand(1.0)
+    island.grab()
+    island.media_page.click(island.buttons["lyrics"].center(), Qt.LeftButton, island)
+    assert island.media_page.lyrics_view
+    island.grab()  # paint starts the widen animation
+    island._set_wide(1.0)
+    assert island._island_rect().width() == app.LYRICS_EXPANDED[0], "Nusa widens the island for lyrics"
+    img = island.grab().toImage()
+    assert "volume" not in island.buttons and {"lyrics", "prev", "toggle", "next"} <= set(island.buttons)
+    assert not island.page_hits, "no page dots or arrows in the lyrics view"
+    bottom = img.pixelColor(app.WIN_W // 2, 192)
+    assert bottom.red() > bottom.green() + 20, "album-coloured glow at the bottom"
+    island.media_page.click(island.buttons["lyrics"].center(), Qt.LeftButton, island)
+    island.grab()
+    assert not island.media_page.lyrics_view and island.wide_anim.endValue() == 0.0, "the button closes it again"
+
+
+def test_collapsed_lyric_pill_glows_and_shows_a_note(island):
+    _red_song(island)
+    island._set_expand(0.0)
+    img = island.grab().toImage()
+    r = island._island_rect()
+    assert island._lyric_pill()
+    low = img.pixelColor(int(r.center().x()) + 60, int(r.bottom()) - 3)
+    assert low.red() > low.green() + 20, "the pill glows in the album colour"
