@@ -98,3 +98,46 @@ def test_tray_and_island_open_settings(island, monkeypatch):
     island.water_page.on_settings()  # the Water page's Settings button
     assert opened == [1, 1]
     assert "settings" not in island.page_hits, "like Nusa, the island itself has no gear"
+
+
+def test_pages_order_and_switches_are_saved_and_applied(island):
+    w, f = _window(island)
+    pages = f["pages"]
+    pages._move("todo", -4)  # To-do to the top
+    pages.switches["water"].setChecked(False)
+    w.save()
+    assert store.load_kv("settings.txt")["pages"] == "todo,media,focus,shelf"
+    assert island.pages == [island.todo_page, island.media_page, island.focus_page, island.shelf_page]
+
+
+def test_open_on_click_and_fast_motion(island):
+    w, f = _window(island)
+    f["open_click"].setCurrentText("Click")
+    f["fast_animation"].setCurrentText("Fast")
+    w.save()
+    assert island.on_click and island.fast and island.page_anim.duration() < 380
+
+
+def test_hud_switches_take_effect(island):
+    w, f = _window(island)
+    f["hud_caps"].setChecked(False)
+    w.save()
+    assert not island.on("hud_caps") and island.on("hud_volume")
+    island.show_caps()
+    assert not island._hud_active(), "Caps Lock HUD switched off"
+
+
+def test_closing_saves_like_nusa(island):
+    w, f = _window(island)
+    f["focus"].setValue(45)
+    w.close()
+    assert store.load_kv("settings.txt")["focus"] == "45"
+
+
+def test_water_page_opens_the_water_section(island):
+    island.open_settings("Water")
+    win = island.settings_window
+    try:
+        assert win.stack.currentIndex() == win.section_index["Water"]
+    finally:
+        win.close()

@@ -201,7 +201,7 @@ def install_keys(island, volume):
             # Win+Space / Alt+Shift / Ctrl+Shift commit on release; the app applies the layout a moment later
             QTimer.singleShot(150, island.check_language)
         # hidden over a fullscreen app: leave the keys to Windows so they still do something
-        if code == 0 and vk in actions and island.isVisible():
+        if code == 0 and vk in actions and island.isVisible() and island.on("hud_volume"):
             if wparam in (0x100, 0x104):  # WM_KEYDOWN, WM_SYSKEYDOWN (auto-repeat arrives as more keydowns)
                 try:
                     island.show_volume(*actions[vk]())

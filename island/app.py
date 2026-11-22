@@ -166,10 +166,12 @@ class Island(QWidget):
         self.peek_anim = QVariantAnimation(self, duration=120, easingCurve=QEasingCurve.OutCubic)
         self.peek_anim.valueChanged.connect(self._set_peek)
         self.dwell = QTimer(self, singleShot=True, interval=200, timeout=lambda: self._animate_to(1.0))
-        settings_now = store.load_kv("settings.txt")
+        settings_now = self.prefs = store.load_kv("settings.txt")
         self.minimal = store.get_int(settings_now, "minimal", 1) == 1
         self.show_clock = store.get_int(settings_now, "clock", 1) == 1
         self.show_ring = store.get_int(settings_now, "ring", 1) == 1
+        self.on_click = settings_now.get("open_click") == "1"
+        self.fast = settings_now.get("fast_animation") == "1"
         self.frame = QTimer(self, interval=16, timeout=self._frame_tick)  # only runs while something animates
         self.media_page = MediaPage()
         self.today = TodayPage()
@@ -273,6 +275,10 @@ class Island(QWidget):
         self.update()
         self._update_frame()
 
+    def on(self, key):
+        """A switch from the settings window; everything defaults to on, like Nusa."""
+        return store.get_int(self.prefs, key, 1) == 1
+
     def show_volume(self, level, muted):
         self._show_hud(("volume", level, muted))
 
@@ -355,16 +361,20 @@ class Island(QWidget):
             return  # keep the old baseline through 'unknown' blips
         popup = system.battery_popup(self.battery, cur)
         if popup:
-            self._show_hud(("battery", cur[1] / 100, cur[2], cur[0], *popup), BATTERY_SECONDS)
+            if self.on("popup_battery"):
+                self._show_hud(("battery", cur[1] / 100, cur[2], cur[0], *popup), BATTERY_SECONDS)
         self.battery = cur
 
     def on_brightness(self, percent):
         # Windows sends the current value right after registering: remember it, don't flash the HUD
         if self.brightness is not None and percent != self.brightness:
-            self._show_hud(("brightness", percent / 100, False))
+            if self.on("hud_brightness"):
+                self._show_hud(("brightness", percent / 100, False))
         self.brightness = percent
 
     def show_caps(self):
+        if not self.on("hud_caps"):
+            return
         on = bool(system._user32.GetKeyState(system.VK_CAPITAL) & 1)  # low bit = toggled
         self._show_hud(("caps", 1.0 if on else 0.0, False))
 
@@ -392,6 +402,8 @@ class Island(QWidget):
     def open_settings(self, section=None):
         if self.settings_window is None or not self.settings_window.isVisible():
             self.settings_window = settings.SettingsWindow(self)
+        if section:
+            self.settings_window.show_section(section)  # e.g. the Water page's Settings button
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
@@ -412,6 +424,10 @@ class Island(QWidget):
         self.minimal = store.get_int(v, "minimal", 1) == 1
         self.show_clock = store.get_int(v, "clock", 1) == 1
         self.show_ring = store.get_int(v, "ring", 1) == 1
+        self.prefs = v
+        self.on_click = v.get("open_click") == "1"
+        self.fast = v.get("fast_animation") == "1"
+        self.page_anim.setDuration(int(380 * (0.6 if self.fast else 1.0)))
         self.focus_page.cfg = self.focus_page._settings()
         self._apply_pages(v)
         if _location_settings(v) != self._loc_settings:  # new place, or back to automatic: look it up again
@@ -487,7 +503,8 @@ class Island(QWidget):
         current = system.foreground_layout()
         # only a change within the same window counts: with per-app input, switching windows changes the layout too
         if self.layout and current[0] == self.layout[0] and current[1] != self.layout[1]:
-            self._show_hud(("language", current[1], False))  # level slot carries the LANGID
+            if self.on("hud_language"):
+                self._show_hud(("language", current[1], False))  # level slot carries the LANGID
         self.layout = current
 
     def check_network(self):
@@ -497,7 +514,7 @@ class Island(QWidget):
             print(f"network_state failed: {e}", file=sys.stderr)
             return
         popup = network.network_popup(self.network, cur)
-        if popup:
+        if popup and self.on("popup_wifi"):
             self._show_hud(("popup", "", *popup))  # Wi-Fi glyph
         if cur[0] and self.network and not self.network[0]:  # back online (e.g. Wi-Fi came up after login): refetch now
             self.calendar.refresh()
@@ -512,12 +529,12 @@ class Island(QWidget):
             print(f"default_device failed: {e}", file=sys.stderr)
             return
         popup = system.audio_popup(self.audio, cur)
-        if popup:
+        if popup and self.on("popup_audio"):
             self._show_hud(("popup", "\uE7F6", *popup))  # headphone glyph
         self.audio = cur
 
     def _check_fullscreen(self):
-        hide = system.fullscreen_app_running()
+        hide = self.on("hide_fullscreen") and system.fullscreen_app_running()
         if hide and self.isVisible():
             self._requeue_reminder()  # shown again when the fullscreen app closes
         self.setVisible(not hide)
@@ -551,7 +568,7 @@ class Island(QWidget):
         curve = QEasingCurve(QEasingCurve.OutBack)
         curve.setOvershoot(0.8)  # Nusa overshoots ~2% (455 -> 465 px) opening and undershoots closing
         self.anim.setEasingCurve(curve)
-        self.anim.setDuration(330 if target >= 1.0 else 300)
+        self.anim.setDuration(int((330 if target >= 1.0 else 300) * (0.6 if self.fast else 1.0)))
         self.anim.stop()
         self.anim.setStartValue(self.expand)
         self.anim.setEndValue(target)
@@ -562,7 +579,7 @@ class Island(QWidget):
         return pos + (time.monotonic() - at if self.info.get("playing") and at is not None else 0)
 
     def _lyric(self):
-        lyrics = self.info.get("lyrics")
+        lyrics = self.info.get("lyrics") if self.on("lyrics") else None
         return (line_at(lyrics, self._pos()) or "♪") if lyrics else ""  # ♪ during instrumental gaps
 
     def _compact_label(self):
@@ -641,7 +658,8 @@ class Island(QWidget):
             self.leave_delay.stop()
             if self.expand < 0.5:  # rest on the pill for a moment (it swells), then it opens
                 self._peek_to(1.0)
-                self.dwell.start()
+                if not self.on_click:
+                    self.dwell.start()
         elif not inside and self.hovered:
             self._leave()
         self.hovered = inside
@@ -664,6 +682,9 @@ class Island(QWidget):
             self.popup_actions[self.hud[2]]()
             self._drain()
             self.update()
+            return
+        if self.on_click and self.expand < 0.5 and e.button() == Qt.LeftButton and self.hovered:
+            self._animate_to(1.0)  # "Open the notch: Click"
             return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
             hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
