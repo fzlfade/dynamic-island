@@ -1,5 +1,6 @@
 """Pomodoro: focus/break cycle driven by its own 1 s timer, so phases end on time even when the island is collapsed."""
 import time
+from datetime import datetime
 import winsound
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
@@ -60,6 +61,7 @@ class FocusPage(Page):
         self.idle_m = self.cfg["focus"]
         self.button = self.reset = QRectF()
         self.timer = QTimer(interval=1000, timeout=lambda: self._tick(time.monotonic()))
+        self.log = store.load_kv("focus.txt")  # {"day", "minutes", "sessions"}: today's finished focus rounds
 
     @staticmethod
     def _settings():
@@ -86,6 +88,7 @@ class FocusPage(Page):
         if new is None:
             return
         if was == "focus":
+            self._log_focus(self.pomo.durations["focus"] // 60)
             popup = ("Focus done", f"Take a {self.minutes[new]} min break")
         elif new == "focus":
             popup = ("Break over", "Back to focus")
@@ -95,6 +98,18 @@ class FocusPage(Page):
             self.timer.stop()
         winsound.MessageBeep()
         self.notify(("popup", GLYPH, *popup))
+
+    def today(self, day=None):
+        """(minutes, sessions) of focus finished today; the Focus today widget shows it."""
+        day = (day or datetime.now().date()).isoformat()
+        if self.log.get("day") != day:
+            return 0, 0
+        return store.get_int(self.log, "minutes", 0), store.get_int(self.log, "sessions", 0)
+
+    def _log_focus(self, minutes, day=None):
+        m, n = self.today(day)
+        self.log = {"day": (day or datetime.now().date()).isoformat(), "minutes": str(m + minutes), "sessions": str(n + 1)}
+        store.save_kv("focus.txt", self.log)
 
     def animating(self):
         return False  # the 1 s tick repaints; no frame timer needed for a countdown

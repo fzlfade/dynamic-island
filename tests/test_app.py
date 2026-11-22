@@ -8,6 +8,12 @@ LRC = [(5.0, "intro"), (10.0, "first"), (20.5, "chorus"), (30.0, ""), (60.0, "ch
 
 def test_rendering_and_render_timer(island, fake_media, tmp_path):
     img = island.grab().toImage()
+    r = island._island_rect()
+    assert island.floating and r.top() == app.FLOAT_GAP and r.width() == app.CLOCK_PILL[0], "floating clock pill"
+    assert img.pixelColor(app.WIN_W // 2, int(r.center().y())).alpha() == 255
+    assert img.pixelColor(app.WIN_W // 2, 2).alpha() <= 1, "the gap above is all but invisible (it only catches hover)"
+    island.floating, island.minimal = False, True  # the settings' Notch style and Minimal idle pill
+    img = island.grab().toImage()
     assert img.pixelColor(app.WIN_W // 2, 2).alpha() == 255, "the minimal idle pill is opaque at top centre"
     assert img.pixelColor(app.WIN_W // 2, 8).alpha() == 0, "and only 4 px tall, like Nusa's"
     assert img.pixelColor(5, 100).alpha() == 0, "outside the pill must be transparent (click-through)"
@@ -26,12 +32,15 @@ def test_rendering_and_render_timer(island, fake_media, tmp_path):
     assert not island.frame.isActive(), "render timer stops when paused (idle like Nusa)"
 
 
-def _with_lyrics(fake_media):
-    fake_media.changed.emit({"title": "Song", "artist": "Artist", "playing": False, "pos": 12.0, "pos_at": 0, "lyrics": LRC})
+def _with_lyrics(fake_media, island=None):
+    if island is not None:
+        island.media_page.lyrics_view = True  # lyrics mode: the lyrics button
+    fake_media.changed.emit({"title": "Song", "artist": "Artist", "playing": island is not None, "pos": 12.0,
+                             "pos_at": None, "lyrics": LRC})
 
 
 def test_lyrics_line_and_widening(island, fake_media, tmp_path):
-    _with_lyrics(fake_media)
+    _with_lyrics(fake_media, island)
     assert island._lyric() == "first"
     fake_media.changed.emit({**island.info, "pos": 31.0})
     assert island._lyric() == "♪", "instrumental gap shows a note"
@@ -44,7 +53,7 @@ def test_lyrics_line_and_widening(island, fake_media, tmp_path):
 
 
 def test_volume_hud_expires(island, fake_media, tmp_path):
-    _with_lyrics(fake_media)
+    _with_lyrics(fake_media, island)
     fake_media.changed.emit({**island.info, "pos": 21.0})
     island._set_expand(0.0)
     island.show_volume(0.42, False)

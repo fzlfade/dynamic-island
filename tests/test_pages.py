@@ -1,7 +1,7 @@
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QMouseEvent, QWheelEvent
 
-from island import app, ask, focus, pages, shelf
+from island import app, ask, focus, pages, shelf, widgets
 
 
 def _wheel(island, dy):
@@ -11,16 +11,16 @@ def _wheel(island, dy):
 
 
 def test_wheel_switches_pages(island):
-    # Nusa's default row: Music, Pomodoro, Water, Shelf, To-do (Today is optional, Ask only while asking)
-    assert [type(pg) for pg in island.pages] == [pages.MediaPage, focus.FocusPage, pages.WaterPage, shelf.ShelfPage,
-                                                 pages.TodoPage]
+    # Nusa's default row plus Widgets after Music (Today is optional, Ask only while asking)
+    assert [type(pg) for pg in island.pages] == [pages.MediaPage, widgets.WidgetsPage, focus.FocusPage,
+                                                 pages.WaterPage, shelf.ShelfPage, pages.TodoPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
     _wheel(island, -120)
     assert island.page == 1
     _wheel(island, -120)
-    assert island.page == 2 and island.pages[2] is island.water_page
+    assert island.page == 2 and island.pages[2] is island.focus_page
     for _ in range(len(island.pages) - 2):
         _wheel(island, -120)
     assert island.page == 0, "wraps around"

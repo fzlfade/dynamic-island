@@ -103,11 +103,12 @@ def test_tray_and_island_open_settings(island, monkeypatch):
 def test_pages_order_and_switches_are_saved_and_applied(island):
     w, f = _window(island)
     pages = f["pages"]
-    pages._move("todo", -4)  # To-do to the top
+    pages._move("todo", -5)  # To-do to the top
     pages.switches["water"].setChecked(False)
     w.save()
-    assert store.load_kv("settings.txt")["pages"] == "todo,media,focus,shelf"
-    assert island.pages == [island.todo_page, island.media_page, island.focus_page, island.shelf_page]
+    assert store.load_kv("settings.txt")["pages"] == "todo,media,widgets,focus,shelf"
+    assert island.pages == [island.todo_page, island.media_page, island.widgets_page, island.focus_page,
+                            island.shelf_page]
 
 
 def test_open_on_click_and_fast_motion(island):

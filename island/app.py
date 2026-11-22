@@ -34,6 +34,7 @@ from PySide6.QtGui import (QColor, QIcon, QFont, QFontMetrics, QGuiApplication, 
                            QPainterPath, QPen, QPixmap)
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
+from island import widgets
 from island import ask, ics, network, notifications, ocr, prayer, settings, shelf, store, system, theme, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
@@ -42,11 +43,12 @@ from island.shelf import ShelfPage
 from island.todo import Todo
 from island.water import Water
 
-COLLAPSED = (190.0, 34.0)
+CLOCK_PILL = (112.0, 30.0)  # idle: battery ring and the time
 MINIMAL = (53.0, 4.0)  # Nusa's idle pill (settings: minimal notch)
 PEEK = (59.0, 8.0)  # the pill swells while the pointer rests on it, before opening
-COLLAPSED_PLAYING = (260.0, 34.0)
-COLLAPSED_LYRICS = (380.0, 34.0)
+COLLAPSED_PLAYING = (210.0, 32.0)  # playing: ring, time, waveform
+COLLAPSED_LYRICS = (380.0, 34.0)  # lyrics mode: the current line
+FLOAT_GAP = 8.0  # floating style: the island hangs this far below the screen's top edge
 HUD = (300.0, 34.0)
 HUD_SECONDS = 1.5
 BATTERY_POPUP = (340.0, 64.0)
@@ -57,7 +59,7 @@ EAR, CORNER = 22.0, 36.0
 BAR_EXTRA = 30.0  # the island grows this much while the page-icons bar shows  # concave flare where the notch meets the bezel; bottom corner radius
 WIN_W, WIN_H = 660, 240  # fits the island plus the page-icons bar  # window fits the largest island; transparent pixels are click-through
 NOTIFY_SECONDS = 4.0
-DEFAULT_PAGES = "media,focus,water,shelf,todo"
+DEFAULT_PAGES = "media,widgets,focus,water,shelf,todo"
 NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -100,6 +102,25 @@ def marquee_offset(text_w, box_w, elapsed):
 
 def _location_settings(values):
     return tuple(values.get(k) for k in ("lat", "lon", "place"))
+
+
+def _add_widgets_page_once():
+    """Pages saved before the Widgets page existed get it once, after Music; turning it off later sticks."""
+    v = store.load_kv("settings.txt")
+    if "pages" in v and v.get("widgets_page_added") != "1":
+        names = v["pages"].split(",")
+        if "widgets" not in names:
+            names.insert(names.index("media") + 1 if "media" in names else 0, "widgets")
+        store.save_kv("settings.txt", {**v, "pages": ",".join(names), "widgets_page_added": "1"})
+
+
+def island_path(r, ear, radius, floating):
+    """A floating island is a plain rounded shape; on the edge it is the notch with flared ears."""
+    if not floating:
+        return notch_path(r, ear, radius)
+    path = QPainterPath()
+    path.addRoundedRect(r, radius, radius)
+    return path
 
 
 def notch_path(r, ear, radius):
@@ -177,7 +198,8 @@ class Island(QWidget):
         self.peek_anim.valueChanged.connect(self._set_peek)
         self.dwell = QTimer(self, singleShot=True, interval=200, timeout=lambda: self._animate_to(1.0))
         settings_now = self.prefs = store.load_kv("settings.txt")
-        self.minimal = store.get_int(settings_now, "minimal", 1) == 1
+        self.minimal = store.get_int(settings_now, "idle_pill", 0) == 1  # 0 clock pill, 1 Nusa's 4 px sliver
+        self.floating = store.get_int(settings_now, "notch_style", 1) == 1  # 0 notch on the edge, 1 floating
         self.show_clock = store.get_int(settings_now, "clock", 1) == 1
         self.show_ring = store.get_int(settings_now, "ring", 1) == 1
         self.on_click = settings_now.get("open_click") == "1"
@@ -218,9 +240,13 @@ class Island(QWidget):
         self.press_at = None  # where a left-button press started, for dragging shelf chips out
         self.ocr_done.connect(self._ocr_finished)
         self.ask_page = ask.AskPage()  # joins the page row only while a question is open
-        self.page_registry = {"media": self.media_page, "focus": self.focus_page, "water": self.water_page,
-                              "shelf": self.shelf_page, "todo": self.todo_page, "today": self.today}
+        self.widgets_page = widgets.WidgetsPage()
+        self.page_registry = {"media": self.media_page, "widgets": self.widgets_page, "focus": self.focus_page,
+                              "water": self.water_page, "shelf": self.shelf_page, "todo": self.todo_page,
+                              "today": self.today}
+        _add_widgets_page_once()
         self._apply_pages(store.load_kv("settings.txt"))
+        QTimer(self, interval=1000, timeout=self.update).start()  # the clock pill shows the time
         self.asker = ask.Asker()  # its signals are delivered to these Island slots on the UI thread
         self.asker.chunk.connect(self._ask_chunk)
         self.asker.finished.connect(self._ask_finished)
@@ -435,7 +461,8 @@ class Island(QWidget):
             self.calendar = calendar
             self.calendar.refresh()
         self.water.set_config(store.load_kv("water.txt"))  # keeps the glasses already logged today
-        self.minimal = store.get_int(v, "minimal", 1) == 1
+        self.minimal = store.get_int(v, "idle_pill", 0) == 1  # 0 clock pill, 1 Nusa's 4 px sliver
+        self.floating = store.get_int(v, "notch_style", 1) == 1  # 0 notch on the edge, 1 floating
         self.show_clock = store.get_int(v, "clock", 1) == 1
         self.show_ring = store.get_int(v, "ring", 1) == 1
         self.prefs = v
@@ -443,6 +470,7 @@ class Island(QWidget):
         self.fast = v.get("fast_animation") == "1"
         self.page_anim.setDuration(int(380 * (0.6 if self.fast else 1.0)))
         self.focus_page.cfg = self.focus_page._settings()
+        self.widgets_page.apply(v)
         self._apply_pages(v)
         if _location_settings(v) != self._loc_settings:  # new place, or back to automatic: look it up again
             self._loc_settings = _location_settings(v)
@@ -640,15 +668,17 @@ class Island(QWidget):
     def _island_rect(self):
         if self._hud_active():
             cw, ch = BATTERY_POPUP if self.hud[0] in ("battery", "popup") else HUD
-        elif not self.info:
-            cw, ch = MINIMAL if self.minimal else COLLAPSED
+        elif self._lyric_pill():
+            cw, ch = COLLAPSED_LYRICS
+        elif self.info.get("playing"):
+            cw, ch = COLLAPSED_PLAYING
         else:
-            cw, ch = COLLAPSED_LYRICS if self.info.get("lyrics") else COLLAPSED_PLAYING
+            cw, ch = MINIMAL if self.minimal else CLOCK_PILL
         cw, ch = cw + (PEEK[0] - MINIMAL[0]) * self.peek, ch + (PEEK[1] - MINIMAL[1]) * self.peek
         ew = lerp(EXPANDED[0], LYRICS_EXPANDED[0], self.wide_v)
         w, h = lerp(cw, ew, self.expand), max(0.0, lerp(ch, EXPANDED[1], self.expand))
         h += BAR_EXTRA * self.bar_v * max(0.0, min(self.expand, 1.0))  # Nusa grows to fit the page-icons bar
-        return QRectF((WIN_W - w) / 2, 0, w, h)
+        return QRectF((WIN_W - w) / 2, FLOAT_GAP if self.floating else 0, w, h)
 
     # --- input ---------------------------------------------------------------
     def _show_notification(self, app_name, title):
@@ -717,7 +747,7 @@ class Island(QWidget):
             drag = getattr(self.pages[self.page], "drag", None)
             if drag and drag(start, self):
                 return
-        inside = self._island_rect().contains(e.position())
+        inside = self._island_rect().adjusted(0, -FLOAT_GAP if self.floating else 0, 0, 0).contains(e.position())
         if inside and not self.hovered:
             self.leave_delay.stop()
             if self.expand < 0.5:  # rest on the pill for a moment (it swells), then it opens
@@ -809,7 +839,10 @@ class Island(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         self._tween(self.wide_anim, self.wide_v, 1.0 if getattr(self.pages[self.page], "lyrics_view", False) else 0.0)
         r = self._island_rect()
-        path = notch_path(r, EAR * max(0.0, min(self.expand, 1.0)), min(CORNER, r.height() / 2, r.width() / 2))
+        radius = min(CORNER, r.height() / 2, r.width() / 2)
+        path = island_path(r, EAR * max(0.0, min(self.expand, 1.0)), radius, self.floating)
+        if self.floating and r.height() >= 12:  # near-invisible strip above: Windows only sends hover over painted pixels
+            p.fillRect(QRectF(r.left() + radius, 0, max(0.0, r.width() - 2 * radius), r.top()), QColor(0, 0, 0, 1))
         p.fillPath(path, theme.ISLAND)
         self._draw_neon(p, path, r)
         self.buttons = {}
@@ -829,10 +862,7 @@ class Island(QWidget):
             self._draw_dots(p, r)
             if self.wide_v >= 0.5:
                 self.page_hits = {}
-        elif not self.info:
-            if r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
-                self._text(p, QRectF(r), self._compact_label() or "No media", 11, theme.TEXT_MUTED, Qt.AlignCenter)
-        else:
+        elif r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
             self._draw_compact(p, r, 1 - self.expand * 2, path)
 
     @staticmethod
@@ -873,23 +903,31 @@ class Island(QWidget):
         p.fillPath(path, grad)
 
     def _lyric_pill(self):
-        """The collapsed island is showing the current lyric line (no page claims the pill)."""
-        return bool(self.info.get("lyrics")) and self.on("lyrics") and all(pg.compact_text() is None for pg in self.pages)
+        """Lyrics mode (the lyrics button) while a song plays and no page (a running Pomodoro) claims the pill."""
+        return (bool(self.info.get("playing")) and getattr(self.media_page, "lyrics_view", False) and self.on("lyrics")
+                and all(pg.compact_text() is None for pg in self.pages))
 
     def _draw_compact(self, p, r, alpha, path):
-        lyric = self._lyric_pill()
-        if lyric:
+        """Collapsed island: the lyric line in lyrics mode, else the battery ring, the time (or a running
+        Pomodoro) and, while music plays, the waveform."""
+        if self._lyric_pill():
             self._glow(p, path, r, alpha)
+            p.setOpacity(alpha)
+            self._text(p, QRectF(r.left() + 10, r.top() + 6, 22, 22), "\u266A", 15, theme.TEXT_MUTED, Qt.AlignCenter)
+            line = self._lyric() if self.info.get("lyrics") else ""
+            box = QRectF(r.left() + 42, r.top(), r.width() - 84, r.height())
+            self._text(p, box, line or "Lyrics not available", 10, theme.TEXT if line else theme.TEXT_MUTED,
+                       Qt.AlignCenter, bold=bool(line), scroll=True)
+            return
         p.setOpacity(alpha)
-        art = QRectF(r.left() + 10, r.top() + 6, 22, 22)
-        if lyric:  # Nusa swaps the cover for a note while it sings along
-            self._text(p, art, "\u266A", 15, theme.TEXT_MUTED, Qt.AlignCenter)
-        else:
-            self._draw_art(p, art, theme.RADIUS_MD)
-            self._draw_bars(p, QPointF(r.right() - 34, r.center().y()))
-        lyric_box = QRectF(r.left() + 42, r.top(), r.width() - 88, r.height())
-        self._text(p, lyric_box, self._compact_label(), 10, theme.TEXT, Qt.AlignCenter, bold=lyric,
-                   scroll=bool(self.info.get("playing")))
+        cy = r.center().y()
+        if self.battery is not None and self.show_ring:
+            self._draw_ring(p, QPointF(r.left() + 19, cy))
+        label = next((t for t in (pg.compact_text() for pg in self.pages) if t is not None), None)
+        self._text(p, QRectF(r.left() + 30, r.top(), r.width() - 60, r.height()), label or f"{datetime.now():%H:%M}",
+                   11, theme.TEXT, Qt.AlignCenter, bold=True)
+        if self.info.get("playing"):
+            self._draw_wave(p, QPointF(r.right() - 22, cy))
 
     def _draw_dots(self, p, r):
         """Nusa-style page indicator: the current page is a 16 px pill, the rest 4 px dots; the pill glides as
@@ -988,12 +1026,7 @@ class Island(QWidget):
         icon = getattr(self.pages[self.page], "status_icon", None)
         at = QPointF(r.right() - 45, cy)
         if icon == "wave" and self.info.get("playing"):  # Nusa drops the waveform when nothing plays
-            t = time.monotonic()
-            p.setPen(Qt.NoPen)
-            p.setBrush(theme.TEXT)
-            for i in range(5):
-                h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 6 + i * 1.3)) if self.info.get("playing") else 4 + (i % 2) * 4
-                p.drawRoundedRect(QRectF(at.x() - 10 + i * 4.5, at.y() - h / 2, 2.2, h), 1.1, 1.1)
+            self._draw_wave(p, at)
         elif icon == "bell":
             bell(p, at, theme.TEXT)
             p.setPen(Qt.NoPen)
@@ -1026,12 +1059,14 @@ class Island(QWidget):
         p.drawPixmap(rect.toRect(), self.art)
         p.restore()
 
-    def _draw_bars(self, p, at):
-        # Decorative equaliser like Nusa's "w_bars": it does not read real audio levels.
+    def _draw_wave(self, p, at):
+        # Decorative waveform like Nusa's: it does not read real audio levels.
         t = time.monotonic()
-        for i in range(4):
-            h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 7 + i * 1.7)) if self.info.get("playing") else 4
-            p.fillRect(QRectF(at.x() + i * 6, at.y() - h / 2, 3, h), theme.PRIMARY)
+        p.setPen(Qt.NoPen)
+        p.setBrush(theme.TEXT)
+        for i in range(5):
+            h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 6 + i * 1.3))
+            p.drawRoundedRect(QRectF(at.x() - 10 + i * 4.5, at.y() - h / 2, 2.2, h), 1.1, 1.1)
 
     def _draw_battery(self, p, r):
         _, level, charging, ac, title, subtitle = self.hud

@@ -3,9 +3,9 @@ a grey subtitle and a control (switch, ± stepper, segmented choice). Every opti
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTime, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+                               QGridLayout, QLineEdit, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
-from island import prayer, store, theme
+from island import prayer, store, theme, widgets
 
 S, W = "settings.txt", "water.txt"
 GREEN, GREY = theme.SUCCESS, theme.TEXT_MUTED
@@ -15,21 +15,30 @@ SECTIONS = [  # (name, neon glyph colour, Segoe Fluent glyph)
     ("Music and lyrics", theme.SECONDARY, ""), ("Notifications", theme.DANGER, ""), ("To-do", theme.SUCCESS, ""),
     ("Pomodoro", theme.SECONDARY, ""), ("Water", theme.PRIMARY, ""), ("Prayer", theme.PRIMARY, ""),
     ("Shelf", theme.WARNING, ""), ("HUD & popups", theme.PRIMARY, ""), ("Ask Claude", theme.SECONDARY, ""),
+    ("Widgets", theme.PRIMARY, "\uF0E2"),
     ("About", theme.TEXT_MUTED, ""),
 ]
-PAGES = [("media", "Music"), ("focus", "Pomodoro"), ("water", "Water"), ("shelf", "Shelf"), ("todo", "To-do"),
+PAGES = [("media", "Music"), ("widgets", "Widgets"), ("focus", "Pomodoro"), ("water", "Water"), ("shelf", "Shelf"), ("todo", "To-do"),
          ("today", "Today")]
-DEFAULT_PAGES = "media,focus,water,shelf,todo"
+DEFAULT_PAGES = "media,widgets,focus,water,shelf,todo"
 
 # (section, group, file, key, kind, default, title, subtitle, options). file None: not a plain key=value
 FIELDS = [
     ("General", "Startup", None, "autostart", "switch", 0, "Start with Windows", "", None),
-    ("General", "Notch", S, "minimal", "switch", 1, "Minimal notch", "A smaller pill when nothing is playing", None),
+    ("General", "Notch", S, "notch_style", "segment", 1, "Style", "On the top edge, or floating just below it",
+     ["Notch", "Floating"]),
+    ("General", "Notch", S, "idle_pill", "segment", 0, "When idle", "The time and battery ring, or a thin sliver",
+     ["Clock", "Minimal"]),
     ("General", "Notch", S, "clock", "switch", 1, "Date & time", "The clock and date beside the status ring", None),
     ("General", "Notch", S, "ring", "switch", 1, "Status ring", "Battery level next to the clock", None),
     ("General", "Full screen", S, "hide_fullscreen", "switch", 1, "Hide in full screen",
      "Games, videos and slides that fill the screen", None),
     ("Pages", "", S, "pages", "pages", DEFAULT_PAGES, "", "", None),
+    ("Widgets", "", S, "widgets", "widgets", widgets.DEFAULT, "", "", None),
+    ("Widgets", "Countdown", S, "countdown_title", "text", "New Year", "Title", "What you are counting down to",
+     None),
+    ("Widgets", "Countdown", S, "countdown_date", "text", "", "Date", "YYYY-MM-DD; empty counts to next 1 January",
+     None),
     ("Appearance", "Notch", S, "open_click", "segment", 0, "Open the notch", "", ["Hover", "Click"]),
     ("Appearance", "Notch", S, "page_icons", "switch", 1, "Page icons",
      "Show page icons when you hover the page dots", None),
@@ -262,6 +271,84 @@ class PagesList(QWidget):
         self.lay.addWidget(card)
 
 
+class WidgetTile(QAbstractButton):
+    """One widget in the picker grid; shows L / R when it fills a side."""
+
+    def __init__(self, kind, name):
+        super().__init__()
+        self.setText(name)
+        self.kind = kind
+        self.badge = ""
+        self.setFixedSize(112, 64)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        box = QRectF(2, 2, self.width() - 4, self.height() - 4)
+        p.setPen(QPen(theme.PRIMARY if self.badge else theme.LINE, 1.5 if self.badge else 1))
+        p.setBrush(theme.CHIP_DARK)
+        p.drawRoundedRect(box, theme.RADIUS_MD, theme.RADIUS_MD)
+        icon = QFont()
+        icon.setFamilies([theme.ICONS, "Segoe MDL2 Assets"])
+        icon.setPixelSize(16)
+        p.setFont(icon)
+        p.setPen(theme.PRIMARY if self.badge else theme.TEXT_MUTED)
+        p.drawText(QRectF(box.left() + 8, box.top() + 8, 20, 20), Qt.AlignCenter, widgets.GLYPHS[self.kind])
+        p.setFont(theme.font(9))
+        p.setPen(theme.TEXT if self.badge else theme.TEXT_MUTED)
+        p.drawText(box.adjusted(8, 0, -8, -8), Qt.AlignLeft | Qt.AlignBottom, self.text())
+        if self.badge:
+            tag = QRectF(box.right() - 22, box.top() + 5, 17, 17)
+            p.setPen(Qt.NoPen)
+            p.setBrush(theme.PRIMARY)
+            p.drawRoundedRect(tag, theme.RADIUS_SM, theme.RADIUS_SM)
+            p.setPen(theme.ON_ACCENT)
+            p.setFont(theme.font(8, QFont.Bold))
+            p.drawText(tag, Qt.AlignCenter, self.badge)
+        _focus_ring(p, self, QRectF(self.rect()).adjusted(1, 1, -1, -1), theme.RADIUS_MD)
+
+
+class WidgetPicker(QWidget):
+    """Nusa-style "Choose widgets": pick Left or Right, then click a widget for that side."""
+
+    def __init__(self):
+        super().__init__()
+        col = QVBoxLayout(self)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.addWidget(QLabel("Choose the two widgets on the Widgets page.", objectName="sub"))
+        self.side = Segmented(["Left", "Right"])
+        col.addWidget(self.side)
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        self.tiles = {}
+        for n, (kind, name) in enumerate(widgets.KINDS):
+            t = self.tiles[kind] = WidgetTile(kind, name)
+            t.clicked.connect(lambda _=0, k=kind: self._pick(k))
+            grid.addWidget(t, n // 3, n % 3)
+        col.addLayout(grid)
+        self.left, self.right = widgets.parse(None)
+
+    def _pick(self, kind):
+        if self.side.index == 0:
+            self.left = kind
+        else:
+            self.right = kind
+        self._badges()
+
+    def _badges(self):
+        for kind, t in self.tiles.items():
+            t.badge = "L" if kind == self.left else "R" if kind == self.right else ""
+            t.update()
+
+    def setText(self, value):
+        self.left, self.right = widgets.parse(value)
+        self._badges()
+
+    def text(self):
+        return f"{self.left},{self.right}"
+
+
 class SidebarItem(QAbstractButton):
     def __init__(self, name, color, glyph):
         super().__init__()
@@ -393,9 +480,9 @@ class SettingsWindow(QWidget):
         open_card = {}
         for sec, grp, file, key, kind, default, title, subtitle, options in FIELDS:  # not `section`: that's the one to open
             col = cards[sec]
-            if kind == "pages":
-                w = PagesList()
-                w.setText(values[S].get("pages", DEFAULT_PAGES))
+            if kind in ("pages", "widgets"):
+                w = PagesList() if kind == "pages" else WidgetPicker()
+                w.setText(values[S].get(key, default))
                 col.addWidget(w)
                 self.widgets[key] = w
                 continue

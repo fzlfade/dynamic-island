@@ -188,9 +188,71 @@ def test_lyrics_button_opens_the_wide_lyrics_view(island):
 
 def test_collapsed_lyric_pill_glows_and_shows_a_note(island):
     _red_song(island)
+    island.media_page.lyrics_view = True
+    island._on_media({**island.info, "playing": True, "pos_at": None})
     island._set_expand(0.0)
     img = island.grab().toImage()
     r = island._island_rect()
     assert island._lyric_pill()
     low = img.pixelColor(int(r.center().x()) + 60, int(r.bottom()) - 3)
     assert low.red() > low.green() + 20, "the pill glows in the album colour"
+
+
+def test_collapsed_pill_shows_clock_then_wave_then_lyrics(island):
+    island.info = {}
+    island._set_expand(0.0)
+    assert island._island_rect().width() == app.CLOCK_PILL[0], "idle: ring and time"
+    island._on_media({"title": "Song", "artist": "A", "playing": True, "pos": 0, "pos_at": None, "lyrics": []})
+    assert island._island_rect().width() == app.COLLAPSED_PLAYING[0], "playing: ring, time and waveform"
+    island.media_page.lyrics_view = True
+    assert island._island_rect().width() == app.COLLAPSED_LYRICS[0], "lyrics mode"
+    island.grab()  # no lyrics found: "Lyrics not available" (drawn without error)
+
+
+def test_floating_gap_still_opens_on_hover(island):
+    island.info = {}
+    island._set_expand(0.0)
+    r = island._island_rect()
+    island.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(r.center().x(), 2), QPointF(0, 0),
+                                      Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+    assert island.hovered, "pointer flung to the top edge, above a floating island, still counts"
+
+
+def test_widgets_settings_and_helpers(island):
+    from datetime import date, datetime, timezone
+    from island import settings, widgets
+    assert widgets.parse("moon,clock") == ("moon", "clock")
+    assert widgets.parse("bogus") == ("week", "prayer")
+    assert widgets.moon(datetime(2024, 1, 25, 17, 54, tzinfo=timezone.utc))[2] == "Full Moon"
+    assert widgets.moon(datetime(2024, 2, 9, 22, 59, tzinfo=timezone.utc))[2] == "New Moon"
+    assert widgets.countdown({}, date(2026, 11, 22)) == ("New Year", date(2027, 1, 1), 40)
+    w = settings.SettingsWindow(island, "Widgets")
+    picker = w.widgets["widgets"]
+    picker.side.setCurrentText("Right")
+    picker._pick("moon")
+    w.save()
+    assert island.widgets_page.right == "moon" and store.load_kv("settings.txt")["widgets"] == "week,moon"
+    island._set_expand(1.0)
+    island.page = island.pages.index(island.widgets_page)
+    for kind, _ in widgets.KINDS:  # every widget draws without error
+        island.widgets_page.left = kind
+        island.grab()
+
+
+def test_old_saved_pages_get_the_widgets_page_once(island):
+    store.save_kv("settings.txt", {"pages": "media,focus"})
+    app._add_widgets_page_once()
+    assert store.load_kv("settings.txt")["pages"] == "media,widgets,focus"
+    store.save_kv("settings.txt", {**store.load_kv("settings.txt"), "pages": "media,focus"})
+    app._add_widgets_page_once()
+    assert store.load_kv("settings.txt")["pages"] == "media,focus", "turning it off later sticks"
+
+
+def test_focus_today_log(qapp):
+    from datetime import date
+    from island.focus import FocusPage
+    f = FocusPage(lambda hud: None)
+    d = date(2026, 11, 22)
+    f._log_focus(25, d)
+    f._log_focus(25, d)
+    assert f.today(d) == (50, 2) and f.today(date(2026, 11, 23)) == (0, 0)
