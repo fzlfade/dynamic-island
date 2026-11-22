@@ -16,22 +16,25 @@ class Water:
         self.day = values.get("day", "")
         self.taken = max(0, store.get_int(values, "taken", 0))
         self.last = store.get_int(values, "last", 0)
+        hours = [int(h) if h.strip().isdigit() else 0 for h in values.get("hours", "").split(",")]
+        self.hours = (hours + [0] * 24)[:24]  # ml drunk in each hour today (Nusa's water.txt keeps the same list)
 
     def set_config(self, values):
         """Goal, glass, bottle, reminder window and interval; today's progress is left alone."""
         for k, default in DEFAULTS.items():
             v = store.get_int(values, k, default)
             setattr(self, k, v if v > 0 or k == "start" and v == 0 else default)
+        self.on = store.get_int(values, "on", 1) == 1  # reminders switch
 
     def roll(self, now):
         today = now.strftime("%Y%m%d")
         if self.day != today:
-            self.day, self.taken, self.last = today, 0, 0
+            self.day, self.taken, self.last, self.hours = today, 0, 0, [0] * 24
 
     def due(self, now):
         self.roll(now)
         m = minute(now)
-        return self.start <= m < self.end and self.taken < self.goal and m - self.last >= self.every
+        return self.on and self.start <= m < self.end and self.taken < self.goal and m - self.last >= self.every
 
     def remind(self, now):
         """The popup to show if a drink is due; records the reminder so it repeats only after `every`."""
@@ -44,6 +47,7 @@ class Water:
         self.roll(now)
         before = self.taken
         self.taken += self.glass
+        self.hours[now.hour] += self.glass
         self.last = minute(now)
         return REFILL if before // self.bottle != self.taken // self.bottle else None
 
@@ -51,4 +55,5 @@ class Water:
         return f"{self.taken} / {self.goal} ml"
 
     def to_kv(self):
-        return {k: getattr(self, k) for k in (*DEFAULTS, "day", "taken", "last")}
+        out = {k: getattr(self, k) for k in (*DEFAULTS, "day", "taken", "last")}
+        return {**out, "on": int(self.on), "hours": ",".join(map(str, self.hours))}

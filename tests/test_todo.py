@@ -120,13 +120,18 @@ def test_six_tasks_add_row_still_clickable(island, monkeypatch):
     from PySide6.QtCore import QRectF
     from PySide6.QtGui import QImage, QPainter
     island.todo.tasks = [Task(False, None, f"t{i}") for i in range(6)]
-    img = QImage(400, 200, QImage.Format_ARGB32)
+    img = QImage(455, 197, QImage.Format_ARGB32)
     p = QPainter(img)
-    island.todo_page.draw(p, QRectF(0, 0, 400, 200), island)
+    island.todo_page.draw(p, QRectF(0, 0, 455, 197), island)
     p.end()
     hits = island.todo_page.hits
-    assert len(hits) == 5 and [h[2] for h in hits] == [0, 1, 2, 3, 6]
+    assert sorted(k for k in hits if isinstance(k, int)) == [0, 1, 2, 3], "the panel lists four tasks"
     called = []
     monkeypatch.setattr(todo.QInputDialog, "getText", staticmethod(lambda *a: (called.append(1) or "new", True)))
-    assert island.todo_page.click(hits[-1][0].center(), Qt.LeftButton, island)
+    assert island.todo_page.click(hits["add"].center(), Qt.LeftButton, island), "Add Task is always reachable"
     assert called and island.todo.tasks[-1].text == "new"
+    assert island.todo_page.click(hits[0].center(), Qt.LeftButton, island)
+    assert island.todo.tasks[0].done, "clicking a task ticks it"
+    island.todo_page.click(hits["edit"].center(), Qt.LeftButton, island)
+    island.todo_page.click(hits[0].center(), Qt.LeftButton, island)
+    assert len(island.todo.tasks) == 6, "in edit mode a click removes the task"

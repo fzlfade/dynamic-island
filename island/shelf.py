@@ -4,12 +4,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QFileInfo, QMimeData, QRectF, Qt, QUrl
-from PySide6.QtGui import QColor, QDrag
+from PySide6.QtCore import QFileInfo, QMimeData, QPointF, QRectF, Qt, QUrl
+from PySide6.QtGui import QColor, QDrag, QPen
 from PySide6.QtWidgets import QFileIconProvider
 
 from island import store
-from island.pages import Page
+from island.pages import GREY, WHITE, Page, tray
 
 MAX_CHIPS = 6
 
@@ -85,15 +85,24 @@ class ShelfPage(Page):
         save(self.items)
 
     def draw(self, p, r, island):
+        """Nusa's shelf: a dashed drop zone; dropped items become chips inside it."""
         self.hits = []
+        zone = QRectF(r.left() + 37, r.top() + 58, r.width() - 74, 105)
+        p.setPen(QPen(QColor(78, 78, 82), 1.4, Qt.DashLine))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(zone, 12, 12)
         if not self.items:
-            island._text(p, QRectF(r), "Drop files here", 11, QColor(140, 140, 140), Qt.AlignCenter)
+            tray(p, QPointF(zone.center().x(), zone.top() + 30))
+            island._text(p, QRectF(zone.left(), zone.top() + 50, zone.width(), 22), "Drop files here", 11, WHITE,
+                         Qt.AlignCenter)
+            island._text(p, QRectF(zone.left(), zone.top() + 72, zone.width(), 18),
+                         "Drag out anytime · click to open or copy", 8, GREY, Qt.AlignCenter)
             return
-        left = r.center().x() - (self.COLS * self.CHIP_W + (self.COLS - 1) * self.GAP) / 2
+        cw = (zone.width() - 16 - (self.COLS - 1) * self.GAP) / self.COLS
         for n, item in enumerate(self.items[:MAX_CHIPS]):
             row, col = divmod(n, self.COLS)
-            chip = QRectF(left + col * (self.CHIP_W + self.GAP), r.top() + 14 + row * (self.CHIP_H + self.GAP),
-                          self.CHIP_W, self.CHIP_H)
+            chip = QRectF(zone.left() + 8 + col * (cw + self.GAP), zone.top() + 8 + row * (self.CHIP_H + self.GAP),
+                          cw, self.CHIP_H)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(38, 38, 42))
             p.drawRoundedRect(chip, 10, 10)
@@ -107,8 +116,11 @@ class ShelfPage(Page):
 
     def click(self, pos, button, island):
         n = self._at(pos)
-        if n is None or button != Qt.RightButton:
+        if n is None:
             return False
+        if button != Qt.RightButton:  # click opens it, like Nusa's shelf
+            os.startfile(self.items[n].path)
+            return True
         del self.items[n]  # removes it from the shelf only; the file stays on disk
         save(self.items)
         return True

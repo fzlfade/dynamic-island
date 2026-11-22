@@ -11,15 +11,16 @@ def _wheel(island, dy):
 
 
 def test_wheel_switches_pages(island):
-    assert [type(pg) for pg in island.pages] == [pages.MediaPage, pages.TodayPage, pages.TodayPage, focus.FocusPage,
-                                                 shelf.ShelfPage, ask.AskPage]
+    # Nusa's default row: Music, Pomodoro, Water, Shelf, To-do (Today is optional, Ask only while asking)
+    assert [type(pg) for pg in island.pages] == [pages.MediaPage, focus.FocusPage, pages.WaterPage, shelf.ShelfPage,
+                                                 pages.TodoPage]
     _wheel(island, -120)
     assert island.page == 0, "wheel does nothing while collapsed"
     island._set_expand(1.0)
     _wheel(island, -120)
     assert island.page == 1
     _wheel(island, -120)
-    assert island.page == 2 and island.pages[2] is island.todo_page
+    assert island.page == 2 and island.pages[2] is island.water_page
     for _ in range(len(island.pages) - 2):
         _wheel(island, -120)
     assert island.page == 0, "wraps around"
@@ -71,10 +72,20 @@ def test_compact_text_wins(island, fake_media):
     island.grab()  # collapsed draw path runs with the label
 
 
+def _show_today(island):
+    island.pages.append(island.today)
+    island.page = island.pages.index(island.today)
+
+
+def test_pages_setting_picks_and_orders_pages(island):
+    island._apply_pages({"pages": "todo,today,media,bogus"})
+    assert island.pages == [island.todo_page, island.today, island.media_page]
+
+
 def test_today_rows_route_clicks(island, tmp_path):
     got = []
     island.today.add_section(lambda: [("Call mom", "09:30"), ("Buy milk", "")], lambda i, b: got.append((i, b)))
-    island.page = 1
+    _show_today(island)
     island._set_expand(1.0)
     island.grab().save(str(tmp_path / "today.png"))
     y = pages.TodayPage.TOP + 2.5 * pages.TodayPage.ROW_H  # third drawn row = second row of section 2
@@ -86,7 +97,7 @@ def test_today_rows_route_clicks(island, tmp_path):
 
 
 def test_today_empty_and_row_cap(island, tmp_path):
-    island.page = 1
+    _show_today(island)
     island._set_expand(1.0)
     island.grab().save(str(tmp_path / "today_empty.png"))
     island.today.sections.clear()
@@ -114,7 +125,7 @@ def test_pin_last_keeps_last_row_and_index(island, qapp):
 
 
 def test_today_page_has_water_row_by_default(island):
-    assert [island.today.sections[1][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "To-do"
+    assert [island.today.sections[1][0]()] == [[("Water", "0 / 1500 ml")]] and island.todo_page.title == "Todo"
 
 
 class Spy(pages.Page):

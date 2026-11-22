@@ -89,15 +89,12 @@ def test_start_with_windows_box_uses_the_registry_helper(island, monkeypatch):
 
 def test_tray_and_island_open_settings(island, monkeypatch):
     opened = []
-    monkeypatch.setattr(island, "open_settings", lambda: opened.append(1))
+    monkeypatch.setattr(island, "open_settings", lambda *section: opened.append(1))
     tray = app.make_tray(island)
     try:
         {a.text(): a for a in tray.contextMenu().actions()}["Settings…"].trigger()
     finally:
         tray.hide()
-    island._set_expand(1.0)
-    island.grab()
-    from PySide6.QtCore import Qt
-    from tests.test_pages import _click_at
-    _click_at(island, island.page_hits["settings"].center())
+    island.water_page.on_settings()  # the Water page's Settings button
     assert opened == [1, 1]
+    assert "settings" not in island.page_hits, "like Nusa, the island itself has no gear"

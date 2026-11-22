@@ -98,11 +98,11 @@ class AskPage(Page):
 
     def draw(self, p, r, island):
         if self.state == "idle":
-            island._text(p, QRectF(r), "Press Ctrl+Alt+Space to ask Claude", 11, QColor(140, 140, 140), Qt.AlignCenter)
+            island._text(p, QRectF(r.left(), r.top() + 44, r.width(), r.height() - 60), "Press Ctrl+Alt+Space to ask Claude", 11, QColor(140, 140, 140), Qt.AlignCenter)
             return
-        island._text(p, QRectF(r.left() + 22, r.top() + 10, r.width() - 44, 20), self.question, 10,
+        island._text(p, QRectF(r.left() + 37, r.top() + 52, r.width() - 74, 20), self.question, 10,
                      QColor(150, 150, 155), Qt.AlignLeft)
-        box = QRectF(r.left() + 22, r.top() + 32, r.width() - 44, r.height() - 56)
+        box = QRectF(r.left() + 37, r.top() + 74, r.width() - 74, r.height() - 96)
         self.shown = self._tail_that_fits(self.text or "…", box)
         p.setFont(self.FONT)
         p.setPen(QColor(255, 120, 110) if self.state == "error" else QColor(255, 255, 255))
@@ -120,5 +120,6 @@ class AskPage(Page):
     def click(self, pos, button, island):
         self.state = "idle"  # a click on the answer closes it
         island.asker.cancel()
+        island._drop_page(self)  # Ask is only in the page row while a question is open
         island._animate_to(0.0)
         return True

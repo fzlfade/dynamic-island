@@ -2,14 +2,15 @@
 import time
 import winsound
 
-from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPen
 
-from island import store
-from island.pages import Page
+from island import store, theme
+from island.pages import CHIP, GREY, PURPLE, WHITE, Page, bar, glyph
 
 GLYPH = "\uE916"  # stopwatch
 NAMES = {"idle": "Ready", "focus": "Focus", "short_break": "Short break", "long_break": "Long break"}
+PHASE_LABEL = {"idle": "Focus", "focus": "Focus", "short_break": "Break", "long_break": "Long break"}
 
 
 class Pomodoro:
@@ -46,15 +47,17 @@ class Pomodoro:
 
 
 class FocusPage(Page):
-    title = "Focus"
+    title = "Pomodoro"
+    status_icon = "wave"
 
     def __init__(self, notify, repaint=lambda: None):
         self.notify = notify
         self.repaint = repaint
         self.pomo = Pomodoro()
         self.minutes = {"short_break": 5, "long_break": 15}
-        self.idle_m = self._settings()["focus"]
-        self.button = QRectF()
+        self.cfg = self._settings()  # cached: draw() runs every frame and must not read the disk
+        self.idle_m = self.cfg["focus"]
+        self.button = self.reset = QRectF()
         self.timer = QTimer(interval=1000, timeout=lambda: self._tick(time.monotonic()))
 
     @staticmethod
@@ -72,7 +75,8 @@ class FocusPage(Page):
     def stop(self):
         self.pomo.stop()
         self.timer.stop()
-        self.idle_m = self._settings()["focus"]
+        self.cfg = self._settings()
+        self.idle_m = self.cfg["focus"]
 
     def _tick(self, now):
         was = self.pomo.phase
@@ -101,16 +105,58 @@ class FocusPage(Page):
         return f"● {s // 60:02d}:{s % 60:02d}"
 
     def draw(self, p, r, island):
-        running = self.pomo.phase != "idle"
-        s = int(self.pomo.remaining(time.monotonic()) + 0.999)
-        text = f"{s // 60:02d}:{s % 60:02d}" if running else f"{self.idle_m:02d}:00"
-        island._text(p, QRectF(r.left(), r.top() + 8, r.width(), 44), text, 28, QColor(255, 255, 255), Qt.AlignCenter, bold=True)
-        island._text(p, QRectF(r.left(), r.top() + 52, r.width(), 18), NAMES[self.pomo.phase], 10, QColor(160, 160, 160), Qt.AlignCenter)
-        self.button = QRectF(r.center().x() - 36, r.bottom() - 46, 72, 26)
+        """Nusa's Pomodoro page: the cycle on the left, this round's segments and Start/reset on the right."""
+        L, T, now = r.left(), r.top(), time.monotonic()
+        phase, running = self.pomo.phase, self.pomo.phase != "idle"
+        m = self.minutes if running else self.cfg
+        rnd, rounds = max(1, self.pomo.round), self.pomo.rounds
+        island._text(p, QRectF(L + 37, T + 52, 160, 20), f"{PHASE_LABEL[phase]} · {rnd} of {rounds}", 10, GREY,
+                     Qt.AlignLeft)
+        left = self.pomo.remaining(now) if running else m["focus"] * 60
+        s = int(left + 0.999)  # round up: shows 25:00 at the start
+        island._text(p, QRectF(L + 37, T + 68, 170, 48), f"{s // 60:02d}:{s % 60:02d}", 26, WHITE, Qt.AlignLeft, bold=True)
+        phase_m = m["focus" if phase == "idle" else phase]
+        label = f"{phase_m} min"
+        lw = QFontMetrics(theme.font(12, QFont.Bold)).horizontalAdvance(label)
+        island._text(p, QRectF(L + 37, T + 122, lw + 4, 24), label, 12, WHITE, Qt.AlignLeft, bold=True)
+        island._text(p, QRectF(L + 45 + lw, T + 122, 90, 24), NAMES[phase] if running else "Ready", 12, PURPLE,
+                     Qt.AlignLeft, bold=True)
+        total = self.pomo.durations[phase] if running else 1
+        bar(p, QRectF(L + 37, T + 153, 148, 5), 1 - left / total if running else 0.0, PURPLE)
+        p.setPen(QPen(QColor(50, 50, 54), 1))
+        p.drawLine(QPointF(L + 207, T + 60), QPointF(L + 207, T + 165))
+        island._text(p, QRectF(L + 223, T + 60, 100, 20), "This round", 10, GREY, Qt.AlignLeft)
+        self.button = QRectF(L + 321, T + 62, 70, 24)
+        grad = QLinearGradient(self.button.topLeft(), self.button.topRight())
+        grad.setColorAt(0, QColor(99, 102, 241))
+        grad.setColorAt(1, QColor(168, 85, 247))
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(60, 60, 60))
-        p.drawRoundedRect(self.button, 13, 13)
-        island._text(p, self.button, "Stop" if running else "Start", 10, QColor(255, 255, 255), Qt.AlignCenter)
+        p.setBrush(grad)
+        p.drawRoundedRect(self.button, 12, 12)
+        island._text(p, self.button, "Stop" if running else "Start", 10, WHITE, Qt.AlignCenter, bold=True)
+        self.reset = QRectF(L + 397, T + 63, 22, 22)
+        p.setBrush(CHIP)
+        p.drawEllipse(self.reset)
+        glyph(p, island, self.reset, "\uE777", 11)
+        bw, dot, gap = 28.0, 5.0, 6.0  # four focus segments and the long break, dots between
+        x = L + 223
+        for n in range(rounds + 1):
+            seg = QRectF(x, T + 107, bw, 6)
+            current = running and (n == rnd - 1 if n < rounds else phase == "long_break")
+            past = running and (n < rnd - 1 if n < rounds else False)
+            frac = 1.0 if past else (1 - left / total if current else 0.0)
+            bar(p, seg, frac, PURPLE, CHIP)
+            name = str(n + 1) if n < rounds else "Long"
+            island._text(p, QRectF(seg.left() - 4, T + 120, bw + 8, 16), name, 8,
+                         WHITE if n == rnd - 1 else GREY, Qt.AlignCenter, bold=n == rnd - 1)
+            if n < rounds:
+                p.setPen(Qt.NoPen)
+                p.setBrush(CHIP)
+                p.drawEllipse(QPointF(x + bw + gap / 2 + dot / 2 - 0.5, T + 110), dot / 2, dot / 2)
+            x += bw + gap + dot
+        whole = rounds * m["focus"] + (rounds - 1) * m["short_break"] + m["long_break"]
+        island._text(p, QRectF(L + 223, T + 140, 195, 18), f"{whole // 60} h {whole % 60} min · {rounds} sessions", 9,
+                     GREY, Qt.AlignLeft)
 
     def click(self, pos, button, island):
         if not self.button.contains(pos):

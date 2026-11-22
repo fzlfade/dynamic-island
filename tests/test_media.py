@@ -70,7 +70,7 @@ def test_cover_read_error_is_retried_and_does_not_lose_the_update(qapp, monkeypa
     assert _poll(m, _session("Song", "Artist", "ref"))["thumb"] == b"JPEG"
 
 
-def test_artist_drops_the_album_apple_music_appends(qapp, monkeypatch):
+def test_artist_line_is_shown_whole_like_nusa(qapp, monkeypatch):
     m = _player(qapp, monkeypatch, {})
     info = _poll(m, _session("Song", "eleventwelfth — another night awake - Single", None))
-    assert info["artist"] == "eleventwelfth"
+    assert info["artist"] == "eleventwelfth — another night awake - Single", "Nusa shows Apple Music's full line"

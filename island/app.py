@@ -37,21 +37,25 @@ from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox, QS
 from island import ask, ics, network, notifications, ocr, prayer, settings, shelf, store, system, theme, weather
 from island.focus import FocusPage
 from island.media import Media, line_at
-from island.pages import MediaPage, TodayPage
+from island.pages import MediaPage, TodayPage, TodoPage, WaterPage, bell
 from island.shelf import ShelfPage
 from island.todo import Todo
 from island.water import Water
 
 COLLAPSED = (190.0, 34.0)
+MINIMAL = (53.0, 4.0)  # Nusa's idle pill (settings: minimal notch)
+PEEK = (59.0, 8.0)  # the pill swells while the pointer rests on it, before opening
 COLLAPSED_PLAYING = (260.0, 34.0)
 COLLAPSED_LYRICS = (380.0, 34.0)
 HUD = (300.0, 34.0)
 HUD_SECONDS = 1.5
 BATTERY_POPUP = (340.0, 64.0)
 BATTERY_SECONDS = 3.0
-EXPANDED = (400.0, 150.0)
-WIN_W, WIN_H = 440, 170  # window fits the largest island; transparent pixels are click-through
+EXPANDED = (455.0, 197.0)  # measured on Nusa 1.3.1
+EAR, CORNER = 22.0, 36.0  # concave flare where the notch meets the bezel; bottom corner radius
+WIN_W, WIN_H = 520, 210  # window fits the largest island; transparent pixels are click-through
 NOTIFY_SECONDS = 4.0
+DEFAULT_PAGES = "media,focus,water,shelf,todo"
 NOTIFY_MAX_AGE = 600.0  # a reminder still queued after 10 min (hidden behind a fullscreen game) is dropped
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -96,6 +100,24 @@ def _location_settings(values):
     return tuple(values.get(k) for k in ("lat", "lon", "place"))
 
 
+def notch_path(r, ear, radius):
+    """Island outline: flat top that flares out into the bezel (concave `ear` arcs), rounded bottom corners."""
+    path = QPainterPath()
+    path.moveTo(r.left() - ear, r.top())
+    path.lineTo(r.right() + ear, r.top())
+    if ear > 0:
+        path.arcTo(QRectF(r.right(), r.top(), 2 * ear, 2 * ear), 90, 90)
+    path.lineTo(r.right(), r.bottom() - radius)
+    path.arcTo(QRectF(r.right() - 2 * radius, r.bottom() - 2 * radius, 2 * radius, 2 * radius), 0, -90)
+    path.lineTo(r.left() + radius, r.bottom())
+    path.arcTo(QRectF(r.left(), r.bottom() - 2 * radius, 2 * radius, 2 * radius), 270, -90)
+    path.lineTo(r.left(), r.top() + ear)
+    if ear > 0:
+        path.arcTo(QRectF(r.left() - 2 * ear, r.top(), 2 * ear, 2 * ear), 0, 90)
+    path.closeSubpath()
+    return path
+
+
 def lerp(a, b, t):
     return a + (b - a) * t
 
@@ -106,7 +128,6 @@ class Island(QWidget):
 
     def __init__(self, media):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
-        theme.load_fonts()
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setMouseTracking(True)
@@ -134,17 +155,24 @@ class Island(QWidget):
         self.wheel = 0  # accumulated angle delta, so touchpads switch once per notch
 
         self.page_from, self.slide, self.slide_dir = None, 1.0, 1  # page-change slide: 0 → 1
-        self.page_anim = QVariantAnimation(self, duration=280, easingCurve=QEasingCurve.OutCubic,
+        self.page_anim = QVariantAnimation(self, duration=380, easingCurve=QEasingCurve.OutCubic,
                                            startValue=0.0, endValue=1.0)
         self.page_anim.valueChanged.connect(self._set_slide)
         self.anim = QVariantAnimation(self, duration=420, easingCurve=QEasingCurve.OutBack)
         self.anim.valueChanged.connect(self._set_expand)
         self.anim.finished.connect(self._drain)  # reminders held while the island was open
-        self.leave_delay = QTimer(self, singleShot=True, interval=350, timeout=lambda: self._animate_to(0.0))
+        self.leave_delay = QTimer(self, singleShot=True, interval=90, timeout=lambda: self._animate_to(0.0))
+        self.peek = 0.0  # 0..1 swell of the closed pill while the pointer rests on it
+        self.peek_anim = QVariantAnimation(self, duration=120, easingCurve=QEasingCurve.OutCubic)
+        self.peek_anim.valueChanged.connect(self._set_peek)
+        self.dwell = QTimer(self, singleShot=True, interval=200, timeout=lambda: self._animate_to(1.0))
+        settings_now = store.load_kv("settings.txt")
+        self.minimal = store.get_int(settings_now, "minimal", 1) == 1
+        self.show_clock = store.get_int(settings_now, "clock", 1) == 1
+        self.show_ring = store.get_int(settings_now, "ring", 1) == 1
         self.frame = QTimer(self, interval=16, timeout=self._frame_tick)  # only runs while something animates
-        self.add_page(MediaPage())
+        self.media_page = MediaPage()
         self.today = TodayPage()
-        self.add_page(self.today)
         self.todo = Todo(self, self.notify)
         self.weather, self.weather_place = None, ""  # set by the worker once the location is known
         self.today.add_section(self._weather_rows)  # first, so the row cap never trims it
@@ -168,19 +196,19 @@ class Island(QWidget):
         self.calendar.refresh()
         QTimer(self, interval=900_000, timeout=lambda: self.calendar.refresh()).start()  # settings may swap it
         QTimer(self, interval=60_000, timeout=self._calendar_check).start()
-        self.todo_page = TodayPage("To-do")
-        self.todo_page.add_section(self.todo.rows, lambda i, b: (self.todo.click(i, b), self.update()), pin_last=True)
-        self.add_page(self.todo_page)
-        self.add_page(FocusPage(self.notify, self.update))
+        self.todo_page = TodoPage(self.todo, self.update)
+        self.focus_page = FocusPage(self.notify, self.update)
+        self.water_page = WaterPage(self.water, self.drink, lambda: self.open_settings("Water"), self.toggle_water)
         if store.get_int(store.load_kv("settings.txt"), "shelf_clear", 0) == 1:
             shelf.save([])
         self.shelf_page = ShelfPage(shelf.load())
-        self.add_page(self.shelf_page)
         self.setAcceptDrops(True)
         self.press_at = None  # where a left-button press started, for dragging shelf chips out
         self.ocr_done.connect(self._ocr_finished)
-        self.ask_page = ask.AskPage()
-        self.add_page(self.ask_page)
+        self.ask_page = ask.AskPage()  # joins the page row only while a question is open
+        self.page_registry = {"media": self.media_page, "focus": self.focus_page, "water": self.water_page,
+                              "shelf": self.shelf_page, "todo": self.todo_page, "today": self.today}
+        self._apply_pages(store.load_kv("settings.txt"))
         self.asker = ask.Asker()  # its signals are delivered to these Island slots on the UI thread
         self.asker.chunk.connect(self._ask_chunk)
         self.asker.finished.connect(self._ask_finished)
@@ -210,6 +238,29 @@ class Island(QWidget):
 
     def add_page(self, page):
         self.pages.append(page)
+        self.update()
+
+    def _apply_pages(self, values):
+        """Pages in the order the settings list them (Nusa's default: Music, Pomodoro, Water, Shelf, To-do)."""
+        current = self.pages[self.page] if self.pages else None
+        names = [n for n in values.get("pages", DEFAULT_PAGES).split(",") if n in self.page_registry]
+        self.pages = [self.page_registry[n] for n in names] or [self.media_page]
+        if self.ask_page.state != "idle":
+            self.pages.append(self.ask_page)
+        self.page = self.pages.index(current) if current in self.pages else 0
+        self.page_from = None
+        self.update()
+
+    def _drop_page(self, page):
+        if page in self.pages and len(self.pages) > 1:
+            current = self.pages[self.page]
+            self.pages.remove(page)
+            self.page = self.pages.index(current) if current in self.pages else 0
+            self.page_from = None
+
+    def toggle_water(self):
+        self.water.on = not self.water.on
+        store.save_kv("water.txt", self.water.to_kv())
         self.update()
 
     def _update_frame(self):
@@ -244,6 +295,8 @@ class Island(QWidget):
         if not ok or not question.strip():
             return
         self.ask_page.start(question.strip())
+        if self.ask_page not in self.pages:
+            self.pages.append(self.ask_page)
         self.page = self.pages.index(self.ask_page)
         self._animate_to(1.0)
         self._update_frame()
@@ -336,7 +389,7 @@ class Island(QWidget):
             self.notify(("popup", "", *popup))
         self.update()
 
-    def open_settings(self):
+    def open_settings(self, section=None):
         if self.settings_window is None or not self.settings_window.isVisible():
             self.settings_window = settings.SettingsWindow(self)
         self.settings_window.show()
@@ -356,6 +409,11 @@ class Island(QWidget):
             self.calendar = calendar
             self.calendar.refresh()
         self.water.set_config(store.load_kv("water.txt"))  # keeps the glasses already logged today
+        self.minimal = store.get_int(v, "minimal", 1) == 1
+        self.show_clock = store.get_int(v, "clock", 1) == 1
+        self.show_ring = store.get_int(v, "ring", 1) == 1
+        self.focus_page.cfg = self.focus_page._settings()
+        self._apply_pages(v)
         if _location_settings(v) != self._loc_settings:  # new place, or back to automatic: look it up again
             self._loc_settings = _location_settings(v)
             self._weather_thread = threading.Thread(target=self._start_weather, daemon=True)
@@ -475,16 +533,33 @@ class Island(QWidget):
         self.expand = v
         self.update()
 
+    def _set_peek(self, v):
+        self.peek = v
+        self.update()
+
+    def _peek_to(self, target):
+        self.peek_anim.stop()
+        self.peek_anim.setStartValue(self.peek)
+        self.peek_anim.setEndValue(target)
+        self.peek_anim.start()
+
     def _animate_to(self, target):
         if target >= 1.0:  # expanding hides the HUD: show the reminder again later
             self._requeue_reminder()
+        else:
+            self._peek_to(0.0)
+        curve = QEasingCurve(QEasingCurve.OutBack)
+        curve.setOvershoot(0.8)  # Nusa overshoots ~2% (455 -> 465 px) opening and undershoots closing
+        self.anim.setEasingCurve(curve)
+        self.anim.setDuration(330 if target >= 1.0 else 300)
         self.anim.stop()
         self.anim.setStartValue(self.expand)
         self.anim.setEndValue(target)
         self.anim.start()
 
     def _pos(self):
-        return self.info["pos"] + (time.monotonic() - self.info["pos_at"] if self.info["playing"] else 0)
+        pos, at = self.info.get("pos", 0.0), self.info.get("pos_at")  # some players report no timeline
+        return pos + (time.monotonic() - at if self.info.get("playing") and at is not None else 0)
 
     def _lyric(self):
         lyrics = self.info.get("lyrics")
@@ -501,10 +576,11 @@ class Island(QWidget):
         if self._hud_active():
             cw, ch = BATTERY_POPUP if self.hud[0] in ("battery", "popup") else HUD
         elif not self.info:
-            cw, ch = COLLAPSED
+            cw, ch = MINIMAL if self.minimal else COLLAPSED
         else:
             cw, ch = COLLAPSED_LYRICS if self.info.get("lyrics") else COLLAPSED_PLAYING
-        w, h = lerp(cw, EXPANDED[0], self.expand), lerp(ch, EXPANDED[1], self.expand)
+        cw, ch = cw + (PEEK[0] - MINIMAL[0]) * self.peek, ch + (PEEK[1] - MINIMAL[1]) * self.peek
+        w, h = lerp(cw, EXPANDED[0], self.expand), max(0.0, lerp(ch, EXPANDED[1], self.expand))
         return QRectF((WIN_W - w) / 2, 0, w, h)
 
     # --- input ---------------------------------------------------------------
@@ -563,14 +639,22 @@ class Island(QWidget):
         inside = self._island_rect().contains(e.position())
         if inside and not self.hovered:
             self.leave_delay.stop()
-            self._animate_to(1.0)
+            if self.expand < 0.5:  # rest on the pill for a moment (it swells), then it opens
+                self._peek_to(1.0)
+                self.dwell.start()
         elif not inside and self.hovered:
-            self.leave_delay.start()
+            self._leave()
         self.hovered = inside
+
+    def _leave(self):
+        self.dwell.stop()
+        if self.expand < 0.5:
+            self._peek_to(0.0)
+        self.leave_delay.start()
 
     def leaveEvent(self, e):
         self.hovered = False
-        self.leave_delay.start()
+        self._leave()
 
     def mouseReleaseEvent(self, e):
         if (self.expand < 0.5 and e.button() == Qt.LeftButton and self._hud_active() and self.hud[0] == "popup"
@@ -583,9 +667,6 @@ class Island(QWidget):
             return
         if self.expand >= 0.5:  # page hit areas are only drawn while expanded
             hit = next((k for k, rect in self.page_hits.items() if rect.contains(e.position())), None)
-            if hit == "settings" and e.button() == Qt.LeftButton:
-                self.open_settings()
-                return
             if hit is not None and e.button() == Qt.LeftButton:
                 step = {"prev": -1, "next": 1}.get(hit)
                 target = (self.page + step) % len(self.pages) if step else hit
@@ -618,15 +699,17 @@ class Island(QWidget):
 
     def _draw_pages(self, p, r, clip):
         if self.page_from is None or self.slide >= 1.0:
+            self._draw_title(p, r, self.pages[self.page])
             self.pages[self.page].draw(p, r, self)
             return
-        travel, alpha = r.width() * 0.5, p.opacity()
+        travel, alpha = 45.0, p.opacity()
         for page, dx, fade in ((self.page_from, -self.slide_dir * self.slide * travel, 1 - self.slide),
                                (self.page, self.slide_dir * (1 - self.slide) * travel, self.slide)):
             p.save()
             p.setClipPath(clip)  # sliding content stays inside the notch
             p.translate(dx, 0)
             p.setOpacity(alpha * fade)
+            self._draw_title(p, r, self.pages[page])
             self.pages[page].draw(p, r, self)
             p.restore()
 
@@ -635,9 +718,7 @@ class Island(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = self._island_rect()
-        radius = lerp(17, 32, min(self.expand, 1.0))
-        path = QPainterPath()  # square top edge so it reads as a notch growing from the bezel
-        path.addRoundedRect(r.adjusted(0, -radius, 0, 0), radius, radius)
+        path = notch_path(r, EAR * max(0.0, min(self.expand, 1.0)), min(CORNER, r.height() / 2, r.width() / 2))
         p.fillPath(path, QColor(0, 0, 0))
         self.buttons = {}
         self.page_hits = {}
@@ -646,10 +727,12 @@ class Island(QWidget):
             return
         if self.expand >= 0.5:
             p.setOpacity(min((self.expand - 0.5) * 2, 1.0))
+            self._draw_header(p, r)
             self._draw_pages(p, r, path)
             self._draw_dots(p, r)
         elif not self.info:
-            self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
+            if r.height() >= 20:  # the minimal pill is a sliver: nothing to read on it
+                self._text(p, QRectF(r), self._compact_label() or "No media", 11, QColor(140, 140, 140), Qt.AlignCenter)
         else:
             self._draw_compact(p, r, 1 - self.expand * 2)
 
@@ -662,25 +745,88 @@ class Island(QWidget):
                    scroll=bool(self.info.get("playing")))
 
     def _draw_dots(self, p, r):
-        """Page dots (click to jump) flanked by ‹ › arrows (click to step); hit areas land in page_hits."""
+        """Nusa-style page indicator: the current page is a 16 px pill, the rest 4 px dots; the pill glides as
+        pages change. Side arrows sit at mid-height. Hit areas land in page_hits."""
         n = len(self.pages)
         if n < 2:
             return
-        cy, step = r.bottom() - 9, 14
+        weight = [0.0] * n  # 1 = pill
+        if self.page_from is not None and self.slide < 1.0:
+            weight[self.page_from], weight[self.page] = 1 - self.slide, self.slide
+        else:
+            weight[self.page] = 1.0
+        widths = [4 + 12 * w for w in weight]
+        gap, cy = 5.0, r.bottom() - 8
+        x = r.center().x() - (sum(widths) + gap * (n - 1)) / 2
         p.setPen(Qt.NoPen)
-        for i in range(n):
-            c = QPointF(r.center().x() + (i - (n - 1) / 2) * step, cy)
-            p.setBrush(QColor(255, 255, 255) if i == self.page else QColor(90, 90, 95))
-            p.drawEllipse(c, 3, 3)
-            self.page_hits[i] = QRectF(c.x() - step / 2, cy - 9, step, 18)
-        edge = r.center().x() + (n / 2) * step
-        for key, x, glyph in (("prev", 2 * r.center().x() - edge - 14, "‹"), ("next", edge, "›")):
-            self.page_hits[key] = QRectF(x, cy - 9, 14, 18)
-            self._text(p, self.page_hits[key], glyph, 12, QColor(170, 170, 175), Qt.AlignCenter)
-        self.page_hits["settings"] = gear = QRectF(r.right() - 40, cy - 10, 20, 20)
-        p.setFont(self._icon_font(13))
-        p.setPen(QColor(150, 150, 156))
-        p.drawText(gear, Qt.AlignCenter, "")  # Settings gear
+        for i, w in enumerate(widths):
+            p.setBrush(QColor(255, 255, 255) if weight[i] > 0.5 else QColor(105, 105, 110))
+            p.drawRoundedRect(QRectF(x, cy - 2, w, 4), 2, 2)
+            hit_w = max(w + gap, 14.0)  # tiny dots, comfortable click target
+            self.page_hits[i] = QRectF(x + w / 2 - hit_w / 2, cy - 9, hit_w, 18)
+            x += w + gap
+        mid = r.top() + 107
+        for key, cx, glyph in (("prev", r.left() + 11, "\u2039"), ("next", r.right() - 12, "\u203a")):
+            self.page_hits[key] = QRectF(cx - 12, mid - 20, 24, 40)
+            self._text(p, QRectF(cx - 7, mid - 11, 14, 22), glyph, 13, QColor(95, 95, 100), Qt.AlignCenter)
+
+    def _draw_title(self, p, r, page):
+        """Page title at the top left; pages that put something else there (Media's cover) set hide_title."""
+        if getattr(page, "hide_title", False):
+            return
+        parts = getattr(page, "title_parts", None) or ([(page.title, QColor(255, 255, 255))] if page.title else [])
+        x = r.left() + 37
+        for text, color in parts:
+            w = QFontMetrics(theme.font(12, QFont.Bold)).horizontalAdvance(text)
+            self._text(p, QRectF(x, r.top() + 27, w + 2, 22), text, 12, color, Qt.AlignLeft, bold=True)
+            x += w
+
+    def _draw_header(self, p, r):
+        """Fixed top row on every page: battery ring, date and bold time, centred; status icon on the right."""
+        now = datetime.now()
+        date_s, time_s = f"{now:%a} {now.day} {now:%b %Y}", f"{now:%H:%M}"
+        cy = r.top() + 31
+        date_w = QFontMetrics(theme.font(11)).horizontalAdvance(date_s)
+        time_w = QFontMetrics(theme.font(11, QFont.Bold)).horizontalAdvance(time_s)
+        ring = self.battery is not None and self.show_ring
+        total = (29 if ring else 0) + (date_w + 9 + time_w if self.show_clock else 0)
+        x = r.center().x() - total / 2
+        if ring:
+            self._draw_ring(p, QPointF(x + 10, cy))
+            x += 29
+        if self.show_clock:
+            self._text(p, QRectF(x, cy - 11, date_w + 2, 22), date_s, 11, QColor(255, 255, 255), Qt.AlignLeft)
+            self._text(p, QRectF(x + date_w + 9, cy - 11, time_w + 2, 22), time_s, 11, QColor(255, 255, 255),
+                       Qt.AlignLeft, bold=True)
+        icon = getattr(self.pages[self.page], "status_icon", None)
+        at = QPointF(r.right() - 45, cy)
+        if icon == "wave":
+            t = time.monotonic()
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255))
+            for i in range(5):
+                h = 4 + 10 * (0.5 + 0.5 * math.sin(t * 6 + i * 1.3)) if self.info.get("playing") else 4 + (i % 2) * 4
+                p.drawRoundedRect(QRectF(at.x() - 10 + i * 4.5, at.y() - h / 2, 2.2, h), 1.1, 1.1)
+        elif icon == "bell":
+            bell(p, at, QColor(255, 255, 255))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 69, 58))
+            p.drawEllipse(QPointF(at.x() + 7, at.y() - 7), 2.5, 2.5)
+
+    def _draw_ring(self, p, c):
+        """Battery level as a green ring (Nusa's status ring), with a bolt while plugged in."""
+        ac, pct, _ = self.battery
+        box = QRectF(c.x() - 8.5, c.y() - 8.5, 17, 17)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(48, 209, 88, 70), 3))
+        p.drawEllipse(box)
+        p.setPen(QPen(QColor(48, 209, 88) if pct > 20 or ac else QColor(255, 69, 58), 3, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(box, 90 * 16, -int(pct / 100 * 360 * 16))
+        if ac:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255))
+            p.drawPolygon([QPointF(c.x() + 1, c.y() - 5), QPointF(c.x() - 2.5, c.y() + 1), QPointF(c.x() - 0.2, c.y() + 1),
+                           QPointF(c.x() - 1, c.y() + 5), QPointF(c.x() + 2.5, c.y() - 1), QPointF(c.x() + 0.2, c.y() - 1)])
 
     def _draw_art(self, p, rect, radius):
         clip = QPainterPath()
@@ -732,6 +878,7 @@ class Island(QWidget):
         font = QFont()
         font.setFamilies(["Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol"])
         font.setPixelSize(px)
+        font.setStyleStrategy(QFont.NoSubpixelAntialias)  # no ClearType colour fringes on the transparent window
         return font
 
     def _draw_hud(self, p, r):
@@ -776,7 +923,7 @@ class Island(QWidget):
 
     def _text(self, p, rect, s, size, color, align, bold=False, scroll=False):
         """One line of text; too long for `rect`: scrolls if `scroll` (repaints are running), else ends in "…"."""
-        font = theme.font(size, QFont.DemiBold if bold else QFont.Normal)
+        font = theme.font(size, QFont.Bold if bold else QFont.Normal)
         p.setFont(font)
         p.setPen(color)
         if scroll and QFontMetrics(font).horizontalAdvance(s) > rect.width():

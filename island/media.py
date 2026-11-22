@@ -89,8 +89,9 @@ class Media(QObject):
         pos = tl.position.total_seconds()
         if playing:
             pos += (datetime.now(timezone.utc) - tl.last_updated_time).total_seconds()
-        artist = (props.artist or "").split(" — ")[0]  # Apple Music sends "Artist — Album" as the artist
-        info = {"title": props.title or "", "artist": artist, "playing": playing,
+        shown = props.artist or ""  # Nusa shows Apple Music's "Artist — Album" line as it comes
+        artist = shown.split(" — ")[0]  # the lyrics search needs the artist alone
+        info = {"title": props.title or "", "artist": shown, "playing": playing, "duration": duration,
                 "pos": max(0.0, min(pos, duration)), "pos_at": time.monotonic()}
         new_track = props.title != self._last_title
         if new_track:  # lyrics only when the track changes

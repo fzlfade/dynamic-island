@@ -8,7 +8,8 @@ LRC = [(5.0, "intro"), (10.0, "first"), (20.5, "chorus"), (30.0, ""), (60.0, "ch
 
 def test_rendering_and_render_timer(island, fake_media, tmp_path):
     img = island.grab().toImage()
-    assert img.pixelColor(app.WIN_W // 2, 5).alpha() == 255, "pill should be opaque at top centre"
+    assert img.pixelColor(app.WIN_W // 2, 2).alpha() == 255, "the minimal idle pill is opaque at top centre"
+    assert img.pixelColor(app.WIN_W // 2, 8).alpha() == 0, "and only 4 px tall, like Nusa's"
     assert img.pixelColor(5, 100).alpha() == 0, "outside the pill must be transparent (click-through)"
 
     fake_media.changed.emit({"title": "A very long song title that must be elided", "artist": "Artist", "playing": True, "thumb": b""})
@@ -17,8 +18,9 @@ def test_rendering_and_render_timer(island, fake_media, tmp_path):
 
     island._set_expand(1.0)
     img = island.grab().toImage()
-    assert set(island.buttons) == {"prev", "toggle", "next"}
-    assert img.pixelColor(app.WIN_W // 2, 110).alpha() == 255, "expanded island reaches its full height"
+    assert set(island.buttons) == {"lyrics", "prev", "toggle", "next", "volume"}
+    assert img.pixelColor(app.WIN_W // 2, 190).alpha() == 255, "expanded island is Nusa's 197 px tall"
+    assert img.pixelColor(int((app.WIN_W - app.EXPANDED[0]) / 2) - 8, 2).alpha() == 255, "ears flare into the bezel"
 
     fake_media.changed.emit({"title": "x", "artist": "y", "playing": False})
     assert not island.frame.isActive(), "render timer stops when paused (idle like Nusa)"

@@ -1,20 +1,12 @@
-"""The island's UI font: Inter (SIL OFL, bundled in fonts/), with tabular figures so timers and percentages don't jiggle."""
-from pathlib import Path
+"""The island's UI font: Segoe UI, the font Nusa draws with (its only font name, found by rea in nusa.exe),
+with tabular figures so timers and percentages don't jiggle."""
+from PySide6.QtGui import QFont
 
-from PySide6.QtGui import QFont, QFontDatabase
-
-FAMILY = "Inter"
-_FILE = Path(__file__).parent / "fonts" / "Inter-Variable.ttf"
-_loaded = []
-
-
-def load_fonts():
-    """Register the bundled font once; needs a QApplication. Without it Qt would fall back to another font."""
-    if not _loaded:
-        _loaded.append(QFontDatabase.addApplicationFont(str(_FILE)))
+FAMILY = "Segoe UI"
 
 
 def font(size, weight=QFont.Normal):
     f = QFont(FAMILY, size, weight)
     f.setFeature(QFont.Tag("tnum"), 1)
+    f.setStyleStrategy(QFont.NoSubpixelAntialias)  # ClearType fringes red/blue on a transparent window
     return f

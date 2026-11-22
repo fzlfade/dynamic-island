@@ -95,10 +95,12 @@ def test_cancelled_dialog_asks_nothing(island, monkeypatch):
 def test_click_closes_answer(island, qapp):
     _ask(island, qapp, FakeClient())
     island._set_expand(1.0)
+    island.pages.append(island.ask_page)
     island.page = island.pages.index(island.ask_page)
     island.grab()
     island.ask_page.click(QPointF(200, 50), Qt.LeftButton, island)
     assert island.ask_page.state == "idle"
+    assert island.ask_page not in island.pages, "Ask leaves the page row once closed"
 
 
 def test_long_answer_keeps_last_lines_visible(island, qapp):
@@ -107,6 +109,7 @@ def test_long_answer_keeps_last_lines_visible(island, qapp):
     page.add(" ".join(f"word{i}" for i in range(300)))
     page.finish()
     island._set_expand(1.0)
+    island.pages.append(page)
     island.page = island.pages.index(page)
     island.grab()
     assert page.shown.endswith("word299") and not page.shown.startswith("word0")
