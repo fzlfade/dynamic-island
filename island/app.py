@@ -723,11 +723,10 @@ class Island(QWidget):
         self._leave()
 
     def mouseReleaseEvent(self, e):
-        if (self.expand < 0.5 and e.button() == Qt.LeftButton and self._hud_active() and self.hud[0] == "popup"
-                and self.hud[2] in self.popup_actions):
-            self.hud_until = 0.0  # dismiss first so a follow-up popup (refill) can show
+        if self.expand < 0.5 and e.button() == Qt.LeftButton and self._hud_active() and self.hud[0] == "popup":
+            self.hud_until = 0.0  # a click closes any popup; dismiss first so a follow-up popup (refill) can show
             self.hud_timer.stop()
-            self.popup_actions[self.hud[2]]()
+            self.popup_actions.get(self.hud[2], lambda: None)()
             self._drain()
             self.update()
             return
@@ -850,19 +849,19 @@ class Island(QWidget):
 
     def _draw_icons_bar(self, p, r):
         """Nusa's page icons: shown while the pointer is on the dots; click one to jump, the gear opens settings."""
-        n, cell, sep = len(self.pages), 28.0, 14.0
+        n, cell, sep = len(self.pages), 32.0, 14.0
         width = n * cell + sep + cell + 12
-        bar = QRectF(r.center().x() - width / 2, r.bottom() - 32, width, 26)
+        bar = QRectF(r.center().x() - width / 2, r.bottom() - 33, width, 28)
         p.save()
         p.setOpacity(p.opacity() * self.bar_v)
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(28, 28, 30))
-        p.drawRoundedRect(bar, 13, 13)
+        p.drawRoundedRect(bar, 14, 14)
         x = bar.left() + 6
         for i, page in enumerate(self.pages):
             cellr = QRectF(x, bar.top(), cell, bar.height())
             current = QColor(255, 55, 95) if i == self.page else QColor(210, 210, 214)
-            p.setFont(self._icon_font(14))
+            p.setFont(self._icon_font(16))
             p.setPen(current)
             p.drawText(cellr, Qt.AlignCenter, getattr(page, "icon", "\uE8FD"))
             if self.bar_v >= 0.5:
@@ -871,7 +870,7 @@ class Island(QWidget):
         p.setPen(QPen(QColor(70, 70, 74), 1))
         p.drawLine(QPointF(x + sep / 2, bar.top() + 6), QPointF(x + sep / 2, bar.bottom() - 6))
         gear = QRectF(x + sep, bar.top(), cell, bar.height())
-        p.setFont(self._icon_font(14))
+        p.setFont(self._icon_font(16))
         p.setPen(QColor(210, 210, 214))
         p.drawText(gear, Qt.AlignCenter, "\uE713")
         if self.bar_v >= 0.5:

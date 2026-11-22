@@ -62,6 +62,9 @@ def test_click_runs_popup_action(island):
     assert hits == [1] and not island._hud_active(), "click triggers the action and dismisses the popup"
     click()
     assert hits == [1], "no popup, no action"
+    island._show_hud(("popup", "", "Time to Refill", "Your bottle is probably empty"))
+    click()
+    assert not island._hud_active() and hits == [1], "a click closes a popup that has no action"
 
 
 def test_island_drink_saves(island):

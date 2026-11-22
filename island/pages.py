@@ -142,7 +142,7 @@ class MediaPage(Page):
             p.setPen(Qt.NoPen)
             p.setBrush(CHIP)
             p.drawRoundedRect(art, 12, 12)
-            glyph(p, island, art, "\uE8D6", 28, QColor(110, 110, 114))
+            glyph(p, island, art, "\uE8D6", 28, QColor(160, 160, 165))
             title = "Not Playing"
         n = info.get("sessions", 0)
         if n > 1:  # one dot per media source; the current one is white
