@@ -66,11 +66,17 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dynamic_island.py")
 
 
+def autostart_command():
+    """What Windows runs at sign-in: the built .exe itself, or pythonw with the script when run from source."""
+    if getattr(sys, "frozen", False):  # PyInstaller build
+        return f'"{sys.executable}"'
+    return f'"{os.path.join(os.path.dirname(sys.executable), "pythonw.exe")}" "{SCRIPT}"'
+
+
 def set_autostart(on, key_name="DynamicIsland"):
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
         if on:
-            pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-            winreg.SetValueEx(k, key_name, 0, winreg.REG_SZ, f'"{pythonw}" "{SCRIPT}"')
+            winreg.SetValueEx(k, key_name, 0, winreg.REG_SZ, autostart_command())
         else:
             try:
                 winreg.DeleteValue(k, key_name)

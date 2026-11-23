@@ -1,4 +1,5 @@
 import ctypes
+import sys
 from ctypes import wintypes
 
 from island import app, system
@@ -174,7 +175,10 @@ def test_autostart_roundtrip():
             assert winreg.QueryValueEx(k, name)[0].endswith('dynamic_island.py"')
         app.set_autostart(False, name)
         assert not app.autostart_enabled(name)
+        sys.frozen = True  # as in the PyInstaller .exe
+        assert app.autostart_command() == f'"{sys.executable}"', "the exe starts itself, no script"
     finally:
+        sys.__dict__.pop("frozen", None)
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, app.RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
                 winreg.DeleteValue(k, name)

@@ -1,0 +1,43 @@
+name: Build exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # attach the exe to a GitHub Release when a v* tag is pushed
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller==6.22.3
+
+      # winrt and anthropic are imported lazily or as namespace packages, and zoneinfo needs tzdata's files on
+      # Windows, so PyInstaller is told to include them explicitly.
+      - name: Build DynamicIsland.exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name DynamicIsland
+          --collect-submodules winrt --collect-submodules anthropic --collect-data tzdata
+          dynamic_island.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DynamicIsland
+          path: dist/DynamicIsland.exe
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DynamicIsland.exe
