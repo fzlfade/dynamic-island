@@ -1223,6 +1223,7 @@ def make_tray(parent):
 
 def main():
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # the island is a tool window Qt doesn't count: closing Settings would quit
     media = Media(autostart=False)
     island = Island(media)
     media.start()  # after Island connected to it, or the first update (with the cover) is lost
