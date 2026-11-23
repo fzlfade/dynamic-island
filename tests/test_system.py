@@ -63,3 +63,14 @@ def test_audio_popup_rules():
 def test_real_default_device():
     dev = system.Volume().default_device()  # read-only: never changes the default device
     assert len(dev) == 2 and all(isinstance(s, str) and s for s in dev)
+
+
+def test_the_desktop_is_not_a_fullscreen_app(monkeypatch):
+    monkeypatch.setattr(system, "_notification_state", lambda: 2)  # QUNS_BUSY, as Windows reports for the desktop
+    monkeypatch.setattr(system, "_foreground_class", lambda: "WorkerW")
+    assert not system.fullscreen_app_running(), "the island stays on the desktop"
+    monkeypatch.setattr(system, "_foreground_class", lambda: "YYGameMakerYY")
+    assert system.fullscreen_app_running(), "a real full-screen game still hides it"
+    monkeypatch.setattr(system, "_notification_state", lambda: 3)  # D3D full screen
+    monkeypatch.setattr(system, "_foreground_class", lambda: "WorkerW")
+    assert system.fullscreen_app_running()

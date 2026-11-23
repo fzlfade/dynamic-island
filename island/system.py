@@ -227,8 +227,17 @@ def _notification_state():
     return state.value
 
 
+def _foreground_class():
+    buf = ctypes.create_unicode_buffer(64)
+    ctypes.windll.user32.GetClassNameW(ctypes.windll.user32.GetForegroundWindow(), buf, 64)
+    return buf.value
+
+
 def fullscreen_app_running():
-    return _notification_state() in (2, 3, 4)  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+    state = _notification_state()
+    if state == 2 and _foreground_class() in ("Progman", "WorkerW"):  # Windows calls the desktop itself "busy"
+        return False
+    return state in (2, 3, 4)  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
 
 
 def notifications_quiet():
