@@ -16,8 +16,22 @@ NAMES = dict(KINDS)
 GLYPHS = {"week": "", "prayer": "", "water": "", "focus": "", "clock": "",
           "battery": "", "moon": "", "countdown": "", "weather": ""}  # Segoe Fluent
 DEFAULT = "week,prayer"  # left,right
-# shortcut: two fixed cities, add a setting if people want their own
-CITIES = (("Tokyo", "Asia/Tokyo"), ("London", "Europe/London"))
+ZONES = {  # World clock cities, picked in Settings > Widgets
+    "Jakarta": "Asia/Jakarta", "Singapore": "Asia/Singapore", "Kuala Lumpur": "Asia/Kuala_Lumpur",
+    "Bangkok": "Asia/Bangkok", "Manila": "Asia/Manila", "Hong Kong": "Asia/Hong_Kong", "Shanghai": "Asia/Shanghai",
+    "Seoul": "Asia/Seoul", "Tokyo": "Asia/Tokyo", "Sydney": "Australia/Sydney", "Auckland": "Pacific/Auckland",
+    "Delhi": "Asia/Kolkata", "Dubai": "Asia/Dubai", "Riyadh": "Asia/Riyadh", "Mecca": "Asia/Riyadh",
+    "Istanbul": "Europe/Istanbul", "Moscow": "Europe/Moscow", "Cairo": "Africa/Cairo", "Berlin": "Europe/Berlin",
+    "Paris": "Europe/Paris", "Amsterdam": "Europe/Amsterdam", "London": "Europe/London", "São Paulo": "America/Sao_Paulo",
+    "New York": "America/New_York", "Toronto": "America/Toronto", "Chicago": "America/Chicago",
+    "Denver": "America/Denver", "Los Angeles": "America/Los_Angeles", "Honolulu": "Pacific/Honolulu", "UTC": "UTC",
+}
+CITY_DEFAULTS = ("Tokyo", "London")
+
+
+def cities(values):
+    """The two World clock cities from settings (unknown names fall back to the defaults)."""
+    return tuple(c if (c := values.get(f"clock_city_{i + 1}", "")) in ZONES else d for i, d in enumerate(CITY_DEFAULTS))
 SYNODIC = 29.530588853  # days from new moon to new moon
 NEW_MOON = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)  # a known new moon
 MOON_NAMES = ("New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon", "Waning Gibbous",
@@ -54,10 +68,11 @@ class WidgetsPage(Page):
     status_icon = "bell"
 
     def __init__(self):
-        self.left, self.right = parse(store.load_kv("settings.txt").get("widgets"))
+        self.apply(store.load_kv("settings.txt"))
 
     def apply(self, values):
         self.left, self.right = parse(values.get("widgets"))
+        self.cities = cities(values)
 
     def draw(self, p, r, island):
         top, h, w, gap = r.top() + 54, 114.0, 186.0, 9.0
@@ -120,9 +135,9 @@ class WidgetsPage(Page):
 
     def _clock(self, p, box, island):
         now = datetime.now(timezone.utc)
-        for i, (city, zone) in enumerate(CITIES):
+        for i, city in enumerate(self.cities):
             row = QRectF(box.left(), box.top() + 4 + i * 30, box.width(), 26)
-            t = now.astimezone(ZoneInfo(zone))
+            t = now.astimezone(ZoneInfo(ZONES[city]))
             island._text(p, row, city, 10, theme.TEXT_MUTED, Qt.AlignLeft | Qt.AlignVCenter)
             island._text(p, row, f"{t:%H:%M}", 15, theme.TEXT, Qt.AlignRight | Qt.AlignVCenter, bold=True)
 

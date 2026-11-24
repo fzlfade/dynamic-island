@@ -256,3 +256,21 @@ def test_focus_today_log(qapp):
     f._log_focus(25, d)
     f._log_focus(25, d)
     assert f.today(d) == (50, 2) and f.today(date(2026, 11, 23)) == (0, 0)
+
+
+def test_world_clock_cities_are_picked_in_settings(island):
+    from zoneinfo import ZoneInfo
+    from island import settings, widgets
+    assert widgets.cities({}) == ("Tokyo", "London")
+    assert widgets.cities({"clock_city_1": "Atlantis"})[0] == "Tokyo", "unknown names fall back"
+    for zone in widgets.ZONES.values():
+        ZoneInfo(zone)  # every city resolves (tzdata ships in the exe)
+    w = settings.SettingsWindow(island, "Widgets")
+    w.widgets["clock_city_1"].setCurrentText("Jakarta")
+    w.widgets["clock_city_2"].setCurrentText("New York")
+    w.save()
+    assert island.widgets_page.cities == ("Jakarta", "New York")
+    island._set_expand(1.0)
+    island.page = island.pages.index(island.widgets_page)
+    island.widgets_page.left = "clock"
+    island.grab()
